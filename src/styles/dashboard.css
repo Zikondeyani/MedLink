@@ -1,0 +1,477 @@
+/* ============================================================
+   MedLink — Supplier Dashboard & Store Management
+   ============================================================ */
+
+/* ---------- Color utilities ---------- */
+.red {
+  color: var(--red);
+}
+.navy {
+  color: var(--navy);
+}
+.green {
+  color: var(--green);
+}
+
+/* ---------- Dashboard stat cards ---------- */
+.dash-card {
+  padding: 20px;
+  display: grid;
+  align-content: start;
+  transition: transform 0.22s var(--ease), box-shadow 0.22s var(--ease), border-color 0.22s var(--ease);
+}
+.dash-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow);
+  border-color: rgba(255, 183, 77, 0.5);
+}
+.dash-card-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 14px;
+}
+.dash-card-navy {
+  background: var(--navy-soft);
+  color: var(--navy);
+}
+.dash-card-teal {
+  background: var(--teal-soft);
+  color: var(--teal-600);
+}
+.dash-card-green {
+  background: var(--green-soft);
+  color: #047857;
+}
+.dash-card-amber {
+  background: var(--amber-soft);
+  color: #b45309;
+}
+.dash-card-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.dash-card-value {
+  font-family: var(--font-display);
+  font-size: 25px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.dash-card-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dash-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.dash-trend.up {
+  color: #047857;
+}
+.dash-trend.down {
+  color: #e11d48;
+}
+
+/* ---------- SVG charts ---------- */
+.chart {
+  width: 100%;
+}
+.chart svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ---------- Donut ---------- */
+.donut {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 10px 0 6px;
+}
+.donut svg {
+  flex: none;
+}
+.donut-legend {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+.donut-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.donut-legend-item i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3.5px;
+  flex: none;
+}
+.donut-legend-item b {
+  color: var(--ink);
+  margin-left: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Top products ---------- */
+.top-product {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  margin-inline: -12px;
+  transition: background 0.15s;
+}
+.top-product:hover {
+  background: #faf8f2;
+}
+.top-product-rank {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--navy-soft);
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 13px;
+}
+.top-product:nth-child(1) .top-product-rank {
+  background: var(--navy);
+  color: #fff;
+}
+.top-product:nth-child(2) .top-product-rank {
+  background: var(--teal-soft);
+  color: var(--teal-600);
+}
+.top-product-bar {
+  margin-top: 7px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border-soft);
+  overflow: hidden;
+}
+.top-product-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+.top-product .grow > .xs {
+  display: block;
+  margin-top: 5px;
+}
+
+/* ---------- Inventory stats ---------- */
+.inventory-stat {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 18px 20px;
+}
+.inventory-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.inventory-icon.teal {
+  background: var(--teal-soft);
+  color: var(--teal-600);
+}
+.inventory-icon.navy {
+  background: var(--navy-soft);
+  color: var(--navy);
+}
+.inventory-icon.green {
+  background: var(--green-soft);
+  color: #047857;
+}
+.inventory-icon.amber {
+  background: var(--amber-soft);
+  color: #b45309;
+}
+.inventory-icon.red {
+  background: var(--red-soft);
+  color: #e11d48;
+}
+.inventory-stat b {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  display: block;
+  font-variant-numeric: tabular-nums;
+}
+.inventory-stat small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* ---------- Low stock banner ---------- */
+.low-stock-banner {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  background: var(--amber-soft);
+  border-color: #f3ddb6;
+}
+.low-stock-banner svg {
+  flex: none;
+}
+
+/* ---------- Table product thumbnails ---------- */
+.table-art {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  flex: none;
+  box-shadow: var(--shadow-xs);
+}
+
+/* ---------- Supplier fulfilment steps ---------- */
+.supplier-steps {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+.sstep {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  text-align: center;
+  padding-inline: 4px;
+}
+.sstep b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  transition: color 0.2s;
+  white-space: nowrap;
+}
+.sstep-dot {
+  position: relative;
+  z-index: 1;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--navy-soft);
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1.5px var(--border);
+  transition: background 0.2s var(--ease), color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+.sstep-line {
+  position: absolute;
+  top: 17px;
+  left: calc(50% + 17px);
+  width: calc(100% - 34px);
+  height: 2px;
+  background: var(--border);
+  z-index: 0;
+}
+.sstep.done .sstep-dot {
+  background: var(--green);
+  color: #fff;
+  box-shadow: 0 0 0 1.5px var(--green);
+}
+.sstep.done .sstep-line {
+  background: var(--green);
+}
+.sstep.done b {
+  color: var(--ink);
+}
+.sstep.current .sstep-dot {
+  background: linear-gradient(135deg, #ffc868, #fb923c);
+  color: #45290a;
+  box-shadow: 0 0 0 5px rgba(255, 183, 77, 0.22);
+}
+.sstep.current b {
+  color: var(--teal-600);
+}
+
+/* ---------- Store preview (banner + logo) ---------- */
+.store-preview {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: #fff;
+  box-shadow: var(--shadow-xs);
+}
+.store-preview-banner {
+  position: relative;
+  height: 158px;
+}
+.store-preview-banner .bg-grid-pattern {
+  position: absolute;
+  inset: 0;
+}
+.store-preview-actions {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1;
+}
+.store-preview-head {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 0 22px 22px;
+  margin-top: -36px;
+}
+.store-preview-head .s-avatar {
+  border: 4px solid #fff;
+  box-shadow: var(--shadow);
+}
+.store-preview-head .btn {
+  position: absolute;
+  right: 16px;
+  bottom: -10px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
+}
+
+/* ---------- Upload grid ---------- */
+.upload-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+.upload-tile {
+  aspect-ratio: 4 / 3;
+  border: 2px dashed var(--border);
+  border-radius: var(--r);
+  background: #f8f6f1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--muted);
+  transition: border-color 0.16s var(--ease), background 0.16s var(--ease), color 0.16s;
+}
+.upload-tile:hover {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+  color: var(--navy);
+}
+
+/* ---------- Spec editor ---------- */
+.spec-editor {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r);
+  background: #f8f6f1;
+}
+
+/* ---------- Form page ---------- */
+.form-page {
+  max-width: 900px;
+}
+
+/* ---------- Dashboard tip ---------- */
+.dash-tip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: linear-gradient(120deg, var(--teal-soft), #fff6e8);
+  border-color: rgba(255, 183, 77, 0.35);
+}
+.dash-tip svg {
+  flex: none;
+}
+
+/* ---------- Escrow / payouts ---------- */
+.escrow-settle {
+  background: linear-gradient(120deg, #fff6e8, #fff);
+  border-color: rgba(255, 183, 77, 0.35);
+}
+.escrow-account {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r);
+  background: #f8f6f1;
+}
+.escrow-account-warn {
+  background: #fff7f0;
+  border-color: rgba(225, 29, 72, 0.25);
+  color: #b45309;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 920px) {
+  .donut {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .upload-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .store-preview-banner {
+    height: 128px;
+  }
+}
+
+@media (max-width: 640px) {
+  .spec-editor {
+    grid-template-columns: 1fr;
+  }
+  .store-preview-head {
+    flex-wrap: wrap;
+    padding-bottom: 16px;
+  }
+  .store-preview-head .btn {
+    position: static;
+    bottom: auto;
+    right: auto;
+    margin-left: auto;
+  }
+  .supplier-steps {
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+  .sstep {
+    min-width: 104px;
+  }
+}

@@ -1,0 +1,130 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { customerOrders } from "../../data/orders";
+import { useOrderStatuses, setOrderStatus } from "../../lib/registry";
+import { mwk, shortDate } from "../../lib/format";
+import DataTable from "../../components/ui/DataTable";
+import type { Column } from "../../components/ui/DataTable";
+import { CustomerOrderStatusBadge } from "../../components/marketplace/OrderStatus";
+import type { CustomerOrderStatus } from "../../data/types";
+
+const statusOptions: CustomerOrderStatus[] = [
+  "confirmed",
+  "preparing",
+  "ready",
+  "out_for_delivery",
+  "delivered",
+  "cancelled",
+];
+
+export default function AdminOrdersPage() {
+  const overrides = useOrderStatuses();
+  const [filter, setFilter] = useState<CustomerOrderStatus | "all">("all");
+
+  const rows = customerOrders.map((o) => ({
+    ...o,
+    status: overrides[o.id] ?? o.status,
+  }));
+
+  const visible = filter === "all" ? rows : rows.filter((o) => o.status === filter);
+
+  const summary = {
+    total: rows.length,
+    delivered: rows.filter((o) => o.status === "delivered").length,
+    inProgress: rows.filter((o) => o.status !== "delivered" && o.status !== "cancelled").length,
+    cancelled: rows.filter((o) => o.status === "cancelled").length,
+  };
+
+  const columns: Column<(typeof rows)[number]>[] = [
+    {
+      key: "order",
+      header: "Order",
+      render: (o) => (
+        <div>
+          <Link to={`/orders/${o.id}`} className="small bold link">{o.number}</Link>
+          <div className="xs muted">{shortDate(o.placedAt)}</div>
+        </div>
+      ),
+    },
+    {
+      key: "customer",
+      header: "Customer",
+      render: (o) => (
+        <div>
+          <div className="small semibold">{o.customerName}</div>
+          <div className="xs muted">{o.address.city} · {o.address.area}</div>
+        </div>
+      ),
+    },
+    {
+      key: "items",
+      header: "Items",
+      render: (o) => <span>{o.lines.length}</span>,
+    },
+    {
+      key: "total",
+      header: "Total",
+      align: "right",
+      render: (o) => <b>{mwk(o.total)}</b>,
+    },
+    {
+      key: "payment",
+      header: "Payment",
+      render: (o) => <span className="small">{o.payment.method}</span>,
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (o) => (
+        <div className="row" style={{ gap: 8 }}>
+          <CustomerOrderStatusBadge status={o.status} />
+          <select
+            className="select select-sm"
+            value={o.status}
+            aria-label={`Change status for ${o.number}`}
+            onChange={(e) => {
+              setOrderStatus(o.id, e.target.value as CustomerOrderStatus);
+            }}
+          >
+            {statusOptions.map((s) => (
+              <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+            ))}
+          </select>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <div className="stack dash-page">
+      <div className="section-head" style={{ marginBottom: 0 }}>
+        <div>
+          <span className="eyebrow">Fulfilment</span>
+          <h1 className="h-section">Orders</h1>
+          <p className="small muted">
+            {summary.total} orders · {summary.delivered} delivered · {summary.inProgress} in progress · {summary.cancelled} cancelled
+          </p>
+        </div>
+      </div>
+
+      <div className="row wrap" style={{ gap: 8 }}>
+        <button className={`chip${filter === "all" ? " chip-active" : ""}`} onClick={() => setFilter("all")}>
+          All <span className="faq-chip-count">{summary.total}</span>
+        </button>
+        {(["delivered", "out_for_delivery", "preparing", "cancelled"] as CustomerOrderStatus[]).map((s) => (
+          <button
+            key={s}
+            className={`chip${filter === s ? " chip-active" : ""}`}
+            onClick={() => setFilter(s)}
+          >
+            {s.replace(/_/g, " ")} <span className="faq-chip-count">{rows.filter((o) => o.status === s).length}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="card card-pad">
+        <DataTable columns={columns} rows={visible} minWidth={800} />
+      </div>
+    </div>
+  );
+}
