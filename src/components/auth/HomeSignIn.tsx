@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { ArrowRight, LockKeyhole, LogIn, Mail } from "lucide-react";
+import { ArrowRight, Loader2, LockKeyhole, LogIn, Mail } from "lucide-react";
 import { Link } from "react-router-dom";
-import { useAuth, authenticate, roleLabel } from "../../lib/auth";
+import { useAuth, roleLabel } from "../../lib/auth";
 import { useToast } from "../../lib/toast";
 
 export default function HomeSignIn() {
@@ -10,10 +10,11 @@ export default function HomeSignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
 
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-  function submit(e: React.FormEvent): void {
+  async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     if (!emailOk) {
       setError("Enter a valid email address.");
@@ -23,13 +24,14 @@ export default function HomeSignIn() {
       setError("Password must be at least 6 characters.");
       return;
     }
-    const result = authenticate(email, password);
+    setPending(true);
+    const result = await signIn(email, password);
+    setPending(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
     const { user } = result;
-    signIn(user);
     push({
       title: "You're signed in",
       message: `Welcome back, ${user.name.split(" ")[0]} — signed in as a ${roleLabel(user.role).toLowerCase()}.`,
@@ -71,8 +73,8 @@ export default function HomeSignIn() {
               </div>
             </label>
             {error && <p className="small red">{error}</p>}
-            <button className="btn btn-primary btn-block btn-lg" type="submit">
-              <LogIn size={16} /> Continue
+            <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={pending}>
+              {pending ? <Loader2 size={16} /> : <LogIn size={16} />} Continue
             </button>
             <p className="xs muted" style={{ textAlign: "center", marginTop: 10 }}>
               Selling on MedLink?{" "}

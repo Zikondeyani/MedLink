@@ -5,6 +5,7 @@ import { activeProducts } from "../../data/products";
 import { monthlySales, categorySales } from "../../data/sales";
 import { supplierCustomers } from "../../data/orders";
 import { useApplications, useSuppliers, reviewApplication, useCategories } from "../../lib/registry";
+import { reviewSupplierApplicationOnBackend } from "../../lib/onboarding";
 import { mwk, mwkCompact, shortDate } from "../../lib/format";
 import DashboardCard from "../../components/ui/DashboardCard";
 import { LineChart, BarChart } from "../../components/charts/Charts";
@@ -18,6 +19,40 @@ export default function AdminDashboardPage() {
   const applications = useApplications();
   const categories = useCategories();
   const { push } = useToast();
+
+  /**
+   * Mirror a KYC decision onto the Postgres backend (supplier role grant and
+   * tenant attach on approval) before applying it to the local registry.
+   * Applications that only exist locally skip the backend call.
+   */
+  async function reviewOnBackend(
+    a: { id: string; ref: string; businessName: string },
+    decision: "approved" | "rejected",
+    reason?: string,
+  ): Promise<void> {
+    try {
+      const result = await reviewSupplierApplicationOnBackend(a, decision, reason);
+      reviewApplication(a.id, decision, reason);
+      if (result.status === "error") {
+        push({
+          title: decision === "approved" ? "Approved in this browser only" : "Rejected in this browser only",
+          message: `The MedLink server could not be updated: ${result.error}`,
+          icon: "error",
+        });
+        return;
+      }
+      push({
+        title: decision === "approved" ? "Application approved" : "Application rejected",
+        message:
+          decision === "approved"
+            ? `${a.businessName} is now a verified supplier.`
+            : `${a.businessName} was rejected.`,
+        icon: decision === "approved" ? "success" : "error",
+      });
+    } catch (error) {
+      push({ title: "Review failed", message: error instanceof Error ? error.message : String(error), icon: "error" });
+    }
+  }
 
   const pending = applications.filter((a) => a.status === "pending");
   const gmv = customerOrders.reduce((sum, o) => sum + o.total, 0);
@@ -133,19 +168,15 @@ export default function AdminDashboardPage() {
                 <div className="row" style={{ gap: 8, marginTop: 12 }}>
                   <button
                     className="btn btn-primary btn-sm"
-                    onClick={() => {
-                      reviewApplication(a.id, "approved");
-                      push({ title: "Application approved", message: `${a.businessName} is now a verified supplier.`, icon: "success" });
-                    }}
+                    onClick={() => void reviewOnBackend(a, "approved")}
                   >
                     <CheckCircle2 size={14} /> Approve
                   </button>
                   <button
                     className="btn btn-outline btn-sm"
-                    onClick={() => {
-                      reviewApplication(a.id, "rejected", "Rejected from dashboard. Add a note in the review queue.");
-                      push({ title: "Application rejected", message: `${a.businessName} was rejected.`, icon: "error" });
-                    }}
+                    onClick={() =>
+                      void reviewOnBackend(a, "rejected", "Rejected from dashboard. Add a note in the review queue.")
+                    }
                   >
                     <XCircle size={14} /> Reject
                   </button>

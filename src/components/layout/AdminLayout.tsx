@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Store,
   Tags,
+  UserCog,
   Users,
   X,
 } from "lucide-react";
@@ -28,6 +29,7 @@ const navItems = [
   { to: "/admin/orders", label: "Orders", icon: ClipboardList },
   { to: "/admin/transactions", label: "Transactions", icon: Landmark },
   { to: "/admin/customers", label: "Customers", icon: Users },
+  { to: "/admin/users", label: "Accounts", icon: UserCog },
   { to: "/admin/categories", label: "Categories", icon: Tags },
   { to: "/admin/pricing", label: "Pricing", icon: Percent },
 ];

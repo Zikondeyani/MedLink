@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { ArrowRight, LogIn, LockKeyhole, Mail, ShieldCheck, User, UserPlus } from "lucide-react";
+import { ArrowRight, Loader2, LogIn, LockKeyhole, Mail, ShieldCheck, User, UserPlus } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { authenticate, registerAccount, roleHomePath, roleLabel, useAuth } from "../lib/auth";
+import { roleHomePath, roleLabel, useAuth } from "../lib/auth";
 import { useToast } from "../lib/toast";
 
 type Mode = "signup" | "signin";
 
 export default function SignUpPage() {
-  const { signIn } = useAuth();
+  const { signIn, signUp } = useAuth();
   const { push } = useToast();
   const navigate = useNavigate();
 
@@ -18,6 +18,7 @@ export default function SignUpPage() {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [tried, setTried] = useState(false);
+  const [pending, setPending] = useState(false);
 
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
@@ -29,7 +30,7 @@ export default function SignUpPage() {
     setConfirm("");
   }
 
-  function submit(e: React.FormEvent): void {
+  async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     setTried(true);
     if (mode === "signup") {
@@ -49,20 +50,31 @@ export default function SignUpPage() {
         setError("Passwords do not match.");
         return;
       }
-      const registered = registerAccount({
+      setPending(true);
+      // The account is created with the customer role. The role travels in the
+      // sign-up metadata, and the database trigger is what actually stores it —
+      // the sign-in form can never choose a role.
+      const created = await signUp({
         name: name.trim(),
         email: email.trim(),
         password: password.trim(),
         role: "customer",
       });
-      if (!registered.ok) {
-        setError(registered.error);
+      setPending(false);
+      if (!created.ok) {
+        setError(created.error);
         return;
       }
-      signIn({ name: registered.account.name, email: registered.account.email, role: "customer" });
+      if (!created.signedIn) {
+        // Email confirmation is enabled on the project — the account exists,
+        // it simply needs the link clicked before a session is issued.
+        push({ title: "Confirm your email", message: created.notice, icon: "info" });
+        switchMode("signin");
+        return;
+      }
       push({
         title: "Account created",
-        message: `Welcome to MedLink, ${registered.account.name.split(" ")[0]} — your customer account is ready.`,
+        message: `Welcome to MedLink, ${created.user.name.split(" ")[0]} — your customer account is ready.`,
         icon: "success",
       });
       navigate("/account");
@@ -77,12 +89,13 @@ export default function SignUpPage() {
       setError("Password must be at least 6 characters.");
       return;
     }
-    const result = authenticate(email, password);
+    setPending(true);
+    const result = await signIn(email, password);
+    setPending(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    signIn(result.user);
     push({
       title: "You're signed in",
       message: `Welcome back, ${result.user.name.split(" ")[0]} — signed in as a ${roleLabel(result.user.role).toLowerCase()}.`,
@@ -191,8 +204,16 @@ export default function SignUpPage() {
 
           {error && <p className="small red">{error}</p>}
 
-          <button className="btn btn-primary btn-block btn-lg" type="submit">
-            {mode === "signup" ? <><UserPlus size={16} /> Create account</> : <><LogIn size={16} /> Sign in</>}
+          <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={pending}>
+            {mode === "signup" ? (
+              <>
+                {pending ? <Loader2 size={16} /> : <UserPlus size={16} />} Create account
+              </>
+            ) : (
+              <>
+                {pending ? <Loader2 size={16} /> : <LogIn size={16} />} Sign in
+              </>
+            )}
           </button>
         </form>
 

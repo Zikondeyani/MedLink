@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { ArrowRight, LockKeyhole, LogIn, Mail, Store, UserPlus } from "lucide-react";
+import { ArrowRight, Loader2, LockKeyhole, LogIn, Mail, Store, UserPlus } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import Modal from "../ui/Modal";
-import { useAuth, authenticate, roleHomePath, roleLabel } from "../../lib/auth";
+import { useAuth, roleHomePath, roleLabel } from "../../lib/auth";
 import { useToast } from "../../lib/toast";
 
 export default function SignInModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -12,10 +12,11 @@ export default function SignInModal({ open, onClose }: { open: boolean; onClose:
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
 
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-  function submit(): void {
+  async function submit(): Promise<void> {
     if (!emailOk) {
       setError("Enter a valid email address.");
       return;
@@ -24,13 +25,15 @@ export default function SignInModal({ open, onClose }: { open: boolean; onClose:
       setError("Password must be at least 6 characters.");
       return;
     }
-    const result = authenticate(email, password);
+    setPending(true);
+    // Role comes from the account, not from anything typed here.
+    const result = await signIn(email, password);
+    setPending(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
     const { user } = result;
-    signIn(user);
     if (user.role !== "customer") navigate(roleHomePath(user.role));
     push({
       title: "You're signed in",
@@ -52,8 +55,8 @@ export default function SignInModal({ open, onClose }: { open: boolean; onClose:
         <>
           <div className="grow" />
           <button className="btn btn-outline" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={submit}>
-            <LogIn size={15} /> Sign in
+          <button className="btn btn-primary" disabled={pending} onClick={() => void submit()}>
+            {pending ? <Loader2 size={15} /> : <LogIn size={15} />} Sign in
           </button>
         </>
       }
@@ -84,7 +87,9 @@ export default function SignInModal({ open, onClose }: { open: boolean; onClose:
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void submit();
+            }}
             aria-label="Password"
           />
         </label>

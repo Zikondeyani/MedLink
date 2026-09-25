@@ -1,8 +1,21 @@
 import { useState, type ReactNode } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { LockKeyhole, LogIn, Store } from "lucide-react";
+import { Loader2, LockKeyhole, LogIn, Store } from "lucide-react";
 import { useAuth, roleHomePath, roleLabel, type UserRole } from "../../lib/auth";
 import SignInModal from "./SignInModal";
+
+/** Shown while the stored session is resolved — a signed-in user is never bounced home. */
+function CheckingSession() {
+  return (
+    <div className="container page">
+      <div className="empty access-gate">
+        <span className="empty-icon"><Loader2 size={26} strokeWidth={1.7} /></span>
+        <h1 className="h-section">Checking your session…</h1>
+        <p className="muted">Verifying your MedLink account and its role.</p>
+      </div>
+    </div>
+  );
+}
 
 function SignInRequired({ role }: { role?: UserRole }) {
   const [open, setOpen] = useState(false);
@@ -41,7 +54,8 @@ function SignInRequired({ role }: { role?: UserRole }) {
 
 /** Require an authenticated session without imposing a role. */
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+  if (loading) return <CheckingSession />;
   return user ? <>{children}</> : <SignInRequired />;
 }
 

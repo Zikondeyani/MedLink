@@ -503,13 +503,19 @@ export function getApplicationByRef(ref: string): SupplierApplication | undefine
   return applications.find((a) => a.ref.toUpperCase() === term);
 }
 
+/**
+ * Create the local projection of a supplier application. `refOverride` lets the
+ * caller reuse the reference number issued by the Postgres backend so the admin
+ * queue and the server row stay addressable by the same reference.
+ */
 export function submitSupplierApplication(
   input: Omit<SupplierApplication, "id" | "ref" | "status" | "submittedAt">,
+  refOverride?: string,
 ): SupplierApplication {
   const application: SupplierApplication = {
     ...input,
     id: `app-${Date.now().toString(36)}`,
-    ref: nextApplicationRef(),
+    ref: refOverride?.trim() || nextApplicationRef(),
     status: "pending",
     submittedAt: new Date().toISOString(),
   };

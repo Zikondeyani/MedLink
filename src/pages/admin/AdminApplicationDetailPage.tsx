@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { getSupplierBySlug, reviewApplication, slugify, useApplications } from "../../lib/registry";
+import { reviewSupplierApplicationOnBackend } from "../../lib/onboarding";
 import { useToast } from "../../lib/toast";
 import { prettyDate } from "../../lib/format";
 
@@ -51,17 +52,36 @@ export default function AdminApplicationDetailPage() {
     rejected: "badge-red",
   };
 
-  function approve(): void {
+  async function approve(): Promise<void> {
+    const result = await reviewSupplierApplicationOnBackend(app!, "approved");
     reviewApplication(app!.id, "approved");
     setRejecting(false);
     setNote("");
+    if (result.status === "error") {
+      push({
+        title: "Approved in this browser only",
+        message: `The MedLink server could not be updated: ${result.error}`,
+        icon: "error",
+      });
+      return;
+    }
     push({ title: "Supplier approved", message: "KYC verified — the store is now live on the marketplace.", icon: "success" });
   }
 
-  function reject(): void {
-    reviewApplication(app!.id, "rejected", note || "KYC documents did not pass verification.");
+  async function reject(): Promise<void> {
+    const reason = note || "KYC documents did not pass verification.";
+    const result = await reviewSupplierApplicationOnBackend(app!, "rejected", reason);
+    reviewApplication(app!.id, "rejected", reason);
     setRejecting(false);
     setNote("");
+    if (result.status === "error") {
+      push({
+        title: "Rejected in this browser only",
+        message: `The MedLink server could not be updated: ${result.error}`,
+        icon: "error",
+      });
+      return;
+    }
     push({ title: "Application rejected", message: "The applicant has been notified of the outcome.", icon: "error" });
   }
 
@@ -171,7 +191,7 @@ export default function AdminApplicationDetailPage() {
                   />
                 </label>
                 <div className="row wrap" style={{ gap: 8, marginTop: 10 }}>
-                  <button className="btn btn-primary btn-sm" onClick={reject}>
+                  <button className="btn btn-primary btn-sm" onClick={() => void reject()}>
                     <XCircle size={14} /> Confirm rejection
                   </button>
                   <button className="btn btn-outline btn-sm" onClick={() => { setRejecting(false); setNote(""); }}>
@@ -181,7 +201,7 @@ export default function AdminApplicationDetailPage() {
               </div>
             ) : (
               <div className="row wrap" style={{ gap: 10 }}>
-                <button className="btn btn-primary" onClick={approve}>
+                <button className="btn btn-primary" onClick={() => void approve()}>
                   <CheckCircle2 size={16} /> Approve & verify supplier
                 </button>
                 <button className="btn btn-outline" style={{ color: "var(--red)", borderColor: "currentColor" }} onClick={() => setRejecting(true)}>

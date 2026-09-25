@@ -20,16 +20,38 @@ import {
   User,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import type { SupplierApplication } from "../data/types";
+import type { KycStatus, SupplierApplication } from "../data/types";
 import { useApplications, submitSupplierApplication, useCategories } from "../lib/registry";
-import { registerAccount, useAuth } from "../lib/auth";
+import { useAuth } from "../lib/auth";
+import {
+  createSupplierApplication,
+  lookupApplicationStatus,
+  type SupplierApplicationInput,
+} from "../lib/onboarding";
 import { useToast } from "../lib/toast";
 import { shortDate } from "../lib/format";
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
-/** Temporary sign-in password issued to newly registered suppliers (demo). */
-const SUPPLIER_DEFAULT_PASSWORD = "medlink123";
+/** What the "check your status" box shows — resolved from either backend. */
+type StatusView = {
+  businessName: string;
+  ref: string;
+  status: KycStatus;
+  submittedAt: string;
+  reviewNote?: string;
+};
+
+/**
+ * One-time sign-in password issued with a new supplier account. Random per
+ * applicant (never a shared constant) and shown once on the success screen.
+ */
+function generateSupplierPassword(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = new Uint32Array(14);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (n) => alphabet[n % alphabet.length]).join("");
+}
 
 const stepTitles: { n: Step; label: string }[] = [
   { n: 1, label: "Business" },
@@ -148,7 +170,7 @@ export default function BecomeASupplierPage() {
   const categories = useCategories();
   const applications = useApplications();
   const { push } = useToast();
-  const { signIn } = useAuth();
+  const { signUp } = useAuth();
 
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -157,7 +179,8 @@ export default function BecomeASupplierPage() {
   const [createdAccount, setCreatedAccount] = useState<{ email: string; password: string } | null>(null);
   const [tried, setTried] = useState(false);
   const [refInput, setRefInput] = useState("");
-  const [checkedApp, setCheckedApp] = useState<SupplierApplication | "notfound" | null>(null);
+  const [checkedApp, setCheckedApp] = useState<StatusView | "notfound" | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -213,12 +236,12 @@ export default function BecomeASupplierPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function submit(): void {
+  async function submit(): Promise<void> {
     if (stepInvalid()) {
       setTried(true);
       return;
     }
-    const app = submitSupplierApplication({
+    const input: SupplierApplicationInput = {
       businessName: form.businessName.trim(),
       businessType: form.businessType,
       categoryFocus: form.categoryFocus,
@@ -243,37 +266,95 @@ export default function BecomeASupplierPage() {
         branch: form.opBranch.trim() || undefined,
         mobileMoney: form.opMobileMoney.trim() || undefined,
       },
-    });
+    };
+
+    setSubmitting(true);
+
+    // 1) Store the KYC application. With a Supabase project configured this is a
+    //    real insert (the public form is allowed by RLS). The reference the
+    //    server issues is reused below so an admin review finds the same row.
+    const backend = await createSupplierApplication(input);
+    const app = submitSupplierApplication(
+      input,
+      backend.status === "submitted" ? backend.ref : undefined,
+    );
+
     setDone(app);
     setCheckedApp(null);
-    // Registered suppliers get a sign-in account with the supplier role —
-    // sign them in right away so their supplier dashboard is accessible.
-    const created = registerAccount({
+
+    // 2) Create the supplier sign-in account. Applying as a supplier is what
+    //    sets the role (stored by the database trigger); the marketplace tenant
+    //    is attached when an administrator approves the KYC.
+    const password = generateSupplierPassword();
+    const created = await signUp({
       name: form.directorName.trim(),
       email: form.email.trim(),
-      password: SUPPLIER_DEFAULT_PASSWORD,
+      password,
       role: "supplier",
     });
-    if (created.ok) {
-      signIn({ name: created.account.name, email: created.account.email, role: "supplier" });
-      setCreatedAccount({ email: created.account.email, password: SUPPLIER_DEFAULT_PASSWORD });
+
+    setSubmitting(false);
+
+    if (created.ok && created.signedIn) {
+      setCreatedAccount({ email: created.user.email, password });
       push({
         title: "Application submitted",
         message: `Reference ${app.ref} — welcome aboard, ${form.directorName.trim().split(" ")[0]}! Your supplier account is ready and KYC review takes 2–3 working days.`,
         icon: "success",
       });
+    } else if (created.ok) {
+      setCreatedAccount(null);
+      push({ title: "Application submitted", message: `Reference ${app.ref} — ${created.notice}`, icon: "info" });
     } else {
       setCreatedAccount(null);
       push({ title: "Application submitted", message: `Reference ${app.ref} — our team will review your KYC within 2–3 working days.`, icon: "success" });
     }
+
+    if (backend.status === "error") {
+      push({
+        title: "Saved in this browser only",
+        message: `Reference ${app.ref} could not be stored on the MedLink server: ${backend.error}`,
+        icon: "error",
+      });
+    }
+
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function checkStatus(): void {
+  async function checkStatus(): Promise<void> {
     const term = refInput.trim().toUpperCase();
     if (!term) return;
-    const found = applications.find((a) => a.ref.toUpperCase() === term) ?? null;
-    setCheckedApp(found ?? "notfound");
+
+    // Prefer the server record, then fall back to this browser's registry.
+    const remote = await lookupApplicationStatus(term);
+    if (remote.status === "found") {
+      const found: StatusView = {
+        businessName: remote.application.businessName,
+        ref: remote.application.ref,
+        status: remote.application.status,
+        submittedAt: remote.application.submittedAt,
+      };
+      if (remote.application.reviewNote) found.reviewNote = remote.application.reviewNote;
+      setCheckedApp(found);
+      return;
+    }
+    if (remote.status === "error") {
+      push({ title: "Could not check that reference", message: remote.error, icon: "error" });
+    }
+
+    const local = applications.find((a) => a.ref.toUpperCase() === term);
+    if (!local) {
+      setCheckedApp("notfound");
+      return;
+    }
+    const found: StatusView = {
+      businessName: local.businessName,
+      ref: local.ref,
+      status: local.status,
+      submittedAt: local.submittedAt,
+    };
+    if (local.reviewNote) found.reviewNote = local.reviewNote;
+    setCheckedApp(found);
   }
 
   const statusTone = (status: SupplierApplication["status"]) =>
@@ -355,7 +436,7 @@ export default function BecomeASupplierPage() {
                 onChange={(e) => setRefInput(e.target.value)}
                 aria-label="Application reference"
               />
-              <button className="btn btn-primary" onClick={checkStatus}>Check status</button>
+              <button className="btn btn-primary" onClick={() => void checkStatus()}>Check status</button>
             </div>
             {checkedApp === "notfound" && (
               <p className="small red" style={{ marginTop: 10 }}>No application found with that reference.</p>
@@ -655,8 +736,8 @@ export default function BecomeASupplierPage() {
                   Continue <ArrowRight size={15} />
                 </button>
               ) : (
-                <button className="btn btn-primary" onClick={submit}>
-                  <ShieldCheck size={15} /> Submit application
+                <button className="btn btn-primary" disabled={submitting} onClick={() => void submit()}>
+                  {submitting ? <Loader2 size={15} /> : <ShieldCheck size={15} />} Submit application
                 </button>
               )}
             </div>
@@ -716,7 +797,7 @@ export default function BecomeASupplierPage() {
               onChange={(e) => setRefInput(e.target.value)}
               aria-label="Application reference"
             />
-            <button className="btn btn-primary" onClick={checkStatus}>Check status</button>
+            <button className="btn btn-primary" onClick={() => void checkStatus()}>Check status</button>
           </div>
           {checkedApp === "notfound" && (
             <p className="small red" style={{ marginTop: 10 }}>No application found with that reference.</p>
