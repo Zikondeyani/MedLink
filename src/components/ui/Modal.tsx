@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 export default function Modal({
@@ -31,7 +32,12 @@ export default function Modal({
 
   if (!open) return null;
 
-  return (
+  /*
+   * Rendered through a portal so the fixed overlay is relative to the
+   * viewport — an ancestor with backdrop-filter (the navbar) otherwise
+   * becomes the containing block and pins the modal to the top.
+   */
+  return createPortal(
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         className="modal"
@@ -51,6 +57,7 @@ export default function Modal({
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-actions">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

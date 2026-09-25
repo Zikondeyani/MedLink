@@ -4,6 +4,7 @@ import {
   ClipboardList,
   Landmark,
   LayoutDashboard,
+  LogOut,
   Menu,
   Package,
   Percent,
@@ -13,7 +14,8 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useAuth } from "../../lib/auth";
 import { useApplications } from "../../lib/registry";
 import { useNotifications } from "../../lib/notifications";
 import Logo from "../ui/Logo";
@@ -33,13 +35,15 @@ const navItems = [
 export default function AdminLayout() {
   const applications = useApplications();
   const pendingCount = applications.filter((a) => a.status === "pending").length;
+  const { signOut } = useAuth();
   const { unread } = useNotifications();
   const [drawer, setDrawer] = useState(false);
-  const location = useLocation();
+  const navigate = useNavigate();
 
-  useEffect(() => {
-    setDrawer(false);
-  }, [location.pathname]);
+  const signOutAndReturnHome = () => {
+    signOut();
+    navigate("/");
+  };
 
   useEffect(() => {
     document.body.style.overflow = drawer ? "hidden" : "";
@@ -75,7 +79,7 @@ export default function AdminLayout() {
 
       <nav className="snav-nav" aria-label="Admin">
         {navItems.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>
+          <NavLink key={item.to} to={item.to} end={item.end} className={linkClass} onClick={() => setDrawer(false)}>
             <item.icon size={18} strokeWidth={1.9} />
             {item.label}
             {item.label === "KYC Applications" && pendingCount > 0 && (
@@ -86,7 +90,7 @@ export default function AdminLayout() {
       </nav>
 
       <div className="snav-foot">
-        <Link to="/" className="snav-link">
+        <Link to="/" className="snav-link" onClick={() => setDrawer(false)}>
           <Store size={15} /> Back to marketplace
         </Link>
       </div>
@@ -108,10 +112,13 @@ export default function AdminLayout() {
             <h2 className="small">Admin Control Centre</h2>
           </div>
           <div className="supplier-topbar-actions">
-            <Link to="/account?tab=notifications" className="nav-icon-btn" aria-label="Notifications">
+            <Link to="/admin/notifications" className="nav-icon-btn" aria-label="Notifications">
               <Bell size={19} />
               {unread > 0 && <span className="nav-badge">{unread}</span>}
             </Link>
+            <button className="nav-icon-btn" onClick={signOutAndReturnHome} aria-label="Sign out" title="Sign out">
+              <LogOut size={18} />
+            </button>
             <Link to="/" className="btn btn-outline btn-sm">
               Marketplace
             </Link>

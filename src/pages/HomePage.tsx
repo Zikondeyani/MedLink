@@ -1,5 +1,5 @@
 import { ArrowRight, BadgeCheck, ClipboardCheck, ShieldCheck, ShoppingCart, Truck } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { useCategories, useSuppliers } from "../lib/registry";
 import { supplierById } from "../data/suppliers";
 import { activeProducts } from "../data/products";
@@ -11,6 +11,7 @@ import ProductImage from "../components/ui/ProductImage";
 import PriceDisplay from "../components/ui/PriceDisplay";
 import HomeFaq from "../components/marketplace/HomeFaq";
 import HomeSignIn from "../components/auth/HomeSignIn";
+import CustomerDashboard from "../components/marketplace/CustomerDashboard";
 
 const featured = activeProducts.filter((p) => p.popular).slice(0, 4);
 
@@ -18,6 +19,15 @@ export default function HomePage() {
   const cats = useCategories();
   const suppliers = useSuppliers();
   const { user } = useAuth();
+
+  // Signed-in users never see the marketing home — it becomes their
+  // dashboard instead. Suppliers and admins land on their own dashboards.
+  if (user) {
+    if (user.role === "supplier") return <Navigate to="/supplier" replace />;
+    if (user.role === "admin") return <Navigate to="/admin" replace />;
+    return <CustomerDashboard />;
+  }
+
   const topSuppliers = [...suppliers.filter((s) => !s.suspended)].sort((a, b) => b.rating - a.rating).slice(0, 3);
   return (
     <div className="home">

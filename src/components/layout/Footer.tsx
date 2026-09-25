@@ -1,10 +1,29 @@
 import { Mail, MapPin, Phone } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useCategories } from "../../lib/registry";
+import { useAuth } from "../../lib/auth";
 import Logo from "../ui/Logo";
 
 export default function Footer() {
   const cats = useCategories();
+  const { user } = useAuth();
+
+  const privateFooterLinks =
+    user?.role === "supplier"
+      ? [
+          { to: "/supplier", label: "Supplier dashboard" },
+          { to: "/supplier/products", label: "Your products" },
+          { to: "/supplier/orders", label: "Incoming orders" },
+          { to: "/supplier/notifications", label: "Notifications" },
+        ]
+      : user?.role === "admin"
+        ? [
+            { to: "/admin", label: "Admin dashboard" },
+            { to: "/admin/applications", label: "KYC applications" },
+            { to: "/admin/transactions", label: "Transactions" },
+            { to: "/admin/notifications", label: "Notifications" },
+          ]
+        : [];
   return (
     <footer className="footer">
       <span className="footer-wordmark" aria-hidden="true">MEDLINK</span>
@@ -47,12 +66,14 @@ export default function Footer() {
           </div>
 
           <div>
-            <h4>For suppliers</h4>
+            <h4>{user?.role === "admin" ? "Platform admin" : "For suppliers"}</h4>
             <ul>
-              <li><Link to="/become-a-supplier">Apply to sell</Link></li>
-              <li><Link to="/supplier">Supplier dashboard</Link></li>
-              <li><Link to="/supplier/products">Your products</Link></li>
-              <li><Link to="/supplier/orders">Incoming orders</Link></li>
+              {user?.role !== "supplier" && (
+                <li><Link to="/become-a-supplier">Apply to sell</Link></li>
+              )}
+              {privateFooterLinks.map((link) => (
+                <li key={link.to}><Link to={link.to}>{link.label}</Link></li>
+              ))}
             </ul>
           </div>
 
@@ -69,8 +90,15 @@ export default function Footer() {
         <div className="footer-bottom">
           <span className="small muted">© 2026 MedLink Marketplace. All rights reserved.</span>
           <span className="footer-trust small muted">
-            <Link to="/faq">FAQs</Link> · <Link to="/become-a-supplier">Sell on MedLink</Link> ·{" "}
-            <Link to="/admin">Admin</Link>
+            <Link to="/faq">FAQs</Link> · <Link to="/become-a-supplier">Sell on MedLink</Link>
+            {user && (
+              <>
+                {" · "}
+                <Link to={user.role === "customer" ? "/account" : user.role === "supplier" ? "/supplier" : "/admin"}>
+                  {user.role === "customer" ? "My account" : user.role === "supplier" ? "Supplier dashboard" : "Admin"}
+                </Link>
+              </>
+            )}
           </span>
         </div>
       </div>

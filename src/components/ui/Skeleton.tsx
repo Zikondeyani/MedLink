@@ -92,7 +92,7 @@ export function DetailSkeleton() {
 
 export function FeaturedProductsSkeleton() {
   return (
-    <div className="grid grid-4">
+    <div className="p-grid p-grid-4">
       {[...Array(8)].map((_, i) => (
         <ProductCardSkeleton key={i} />
       ))}

@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import {
   Banknote,
   CheckCircle2,
-  ChevronLeft,
   ChevronRight,
   CreditCard,
   Landmark,
@@ -12,11 +11,12 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { DeliveryAddress, PaymentMethod } from "../data/types";
-import { savedAddresses } from "../data/orders";
 import { mwk } from "../lib/format";
 import { useCart, type CartSummary } from "../lib/cart";
 import { useToast } from "../lib/toast";
-import { getPricing } from "../lib/registry";
+import { useAuth } from "../lib/auth";
+import { createCustomerOrder, getDefaultCustomerAddress, saveCustomerAddress } from "../lib/customerData";
+import { getPricing, recordOrderPayment } from "../lib/registry";
 import { quoteDelivery, serviceFee } from "../components/marketplace/DeliveryFeeCard";
 import CheckoutSummary from "../components/marketplace/CheckoutSummary";
 import ProductImage from "../components/ui/ProductImage";
@@ -35,21 +35,44 @@ interface PaymentFields {
   bankRef: string;
 }
 
+function onlyDigits(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function safePaymentReference(payment: PaymentFields): string {
+  if (payment.method === "Mobile Money") {
+    const digits = onlyDigits(payment.mobileNumber);
+    return `Mobile Money · xx${digits.slice(-4) || "0000"}`;
+  }
+  if (payment.method === "Bank Card") {
+    const digits = onlyDigits(payment.cardNumber);
+    return `Bank Card · xx${digits.slice(-4) || "0000"}`;
+  }
+  return "Bank Transfer · reference submitted";
+}
+
 export default function CheckoutPage() {
   const { summary, clear } = useCart();
   const { push } = useToast();
+  const { user } = useAuth();
+  const customerEmail = user?.email ?? "";
 
   const [step, setStep] = useState<Step>("Delivery");
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [placed, setPlaced] = useState<CartSummary | null>(null);
+  const [placedOrderId, setPlacedOrderId] = useState("");
+  const [placedOrderNumber, setPlacedOrderNumber] = useState("");
 
-  const [address, setAddress] = useState<DeliveryAddress>({
-    fullName: savedAddresses[0]?.fullName ?? "Thandiwe Banda",
-    phone: savedAddresses[0]?.phone ?? "+265 888 912 345",
-    address: savedAddresses[0]?.address ?? "",
-    city: savedAddresses[0]?.city ?? "Lilongwe",
-    area: savedAddresses[0]?.area ?? "Area 9",
-    instructions: "",
+  const [address, setAddress] = useState<DeliveryAddress>(() => {
+    const saved = customerEmail ? getDefaultCustomerAddress(customerEmail) : undefined;
+    return {
+      fullName: saved?.fullName ?? user?.name ?? "",
+      phone: saved?.phone ?? "",
+      address: saved?.address ?? "",
+      city: saved?.city ?? "Lilongwe",
+      area: saved?.area ?? "",
+      instructions: saved?.instructions ?? "",
+    };
   });
   const [errors, setErrors] = useState<Partial<Record<keyof DeliveryAddress, string>>>({});
 
@@ -61,6 +84,7 @@ export default function CheckoutPage() {
     cardCvc: "",
     bankRef: "",
   });
+  const [paymentError, setPaymentError] = useState("");
 
   const delivery = useMemo(() => quoteDelivery(address.city), [address.city]);
   const fee = serviceFee(summary.subtotal);
@@ -79,8 +103,24 @@ export default function CheckoutPage() {
     return Object.keys(next).length === 0;
   };
 
+  const validatePayment = (): boolean => {
+    let error = "";
+    if (payment.method === "Mobile Money" && onlyDigits(payment.mobileNumber).length < 9) {
+      error = "Enter a valid mobile money number.";
+    } else if (payment.method === "Bank Card") {
+      if (onlyDigits(payment.cardNumber).length < 12) error = "Enter a valid card number.";
+      else if (!payment.cardExpiry.trim()) error = "Enter the card expiry date.";
+      else if (!/^\d{3,4}$/.test(payment.cardCvc.trim())) error = "Enter a valid card security code.";
+    } else if (payment.method === "Bank Transfer" && payment.bankRef.trim().length < 3) {
+      error = "Enter the account name or payment reference.";
+    }
+    setPaymentError(error);
+    return !error;
+  };
+
   const next = () => {
     if (step === "Delivery" && !validateAddress()) return;
+    if (step === "Payment" && !validatePayment()) return;
     const idx = steps.indexOf(step);
     if (idx < steps.length - 1) {
       setStep(steps[idx + 1]);
@@ -88,18 +128,41 @@ export default function CheckoutPage() {
     }
   };
 
-  const back = () => {
-    const idx = steps.indexOf(step);
-    if (idx > 0) setStep(steps[idx - 1]);
-  };
-
   const placeOrder = () => {
+    if (!user || user.role !== "customer" || !validatePayment()) return;
+
+    const order = createCustomerOrder({
+      customerEmail: user.email,
+      customerName: address.fullName,
+      address,
+      lines: summary.groups.flatMap((group) =>
+        group.lines.map(({ product, quantity }) => ({
+          productId: product.id,
+          name: product.name,
+          price: product.price,
+          quantity,
+          unit: product.unit,
+          supplierId: group.supplierId,
+          supplierName: group.supplierName || "MedLink supplier",
+          image: product.id,
+        })),
+      ),
+      subtotal: summary.subtotal,
+      serviceFee: fee,
+      deliveryFee: delivery.baseFee,
+      total,
+      payment: { method: payment.method, reference: safePaymentReference(payment) },
+    });
+    saveCustomerAddress(user.email, address);
+    recordOrderPayment(order);
     setPlaced(summary);
+    setPlacedOrderId(order.id);
+    setPlacedOrderNumber(order.number);
     setOrderPlaced(true);
     clear();
     push({
       title: "Order placed",
-      message: `Your order ${`ML-2026${String(Math.floor(Math.random() * 900) + 100)}-0${summary.groups.length}`} has been successfully placed.`,
+      message: `Your order ${order.number} has been successfully placed.`,
       icon: "order",
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -127,7 +190,7 @@ export default function CheckoutPage() {
           <span className="success-icon"><CheckCircle2 size={44} strokeWidth={1.6} /></span>
           <h1 className="h-section">Order Confirmed</h1>
           <p className="muted" style={{ maxWidth: 480 }}>
-            Your order has been successfully placed. The supplier has been notified and MedLink will handle delivery.
+            Your order <b>{placedOrderNumber}</b> has been successfully placed. The supplier has been notified and MedLink will handle delivery.
           </p>
           <div className="success-grid">
             <div className="success-item"><small className="muted">Supplier</small><b>{suppliers.join(", ")}</b></div>
@@ -136,7 +199,7 @@ export default function CheckoutPage() {
             <div className="success-item"><small className="muted">Estimated delivery</small><b>Today / Tomorrow</b></div>
           </div>
           <div className="row" style={{ justifyContent: "center", marginTop: 24, flexWrap: "wrap" }}>
-            <Link to="/orders" className="btn btn-primary"><Truck size={16} /> Track order</Link>
+            <Link to={`/orders/${placedOrderId}`} className="btn btn-primary"><Truck size={16} /> Track order</Link>
             <Link to="/products" className="btn btn-outline">Continue shopping</Link>
           </div>
         </div>
@@ -252,18 +315,19 @@ export default function CheckoutPage() {
                 Payments are processed by MedLink. The supplier receives payment for their products and MedLink delivers
                 your order. This is a simulated checkout — no real payment is taken.
               </p>
+              {paymentError && <p className="small red" style={{ marginBottom: 12 }}>{paymentError}</p>}
               <div className="pay-methods">
-                <button className={`pay-method${payment.method === "Mobile Money" ? " pay-method-active" : ""}`} onClick={() => setPayment({ ...payment, method: "Mobile Money" })}>
+                <button className={`pay-method${payment.method === "Mobile Money" ? " pay-method-active" : ""}`} onClick={() => { setPaymentError(""); setPayment({ ...payment, method: "Mobile Money" }); }}>
                   <Smartphone size={20} />
                   <div className="grow"><b>Mobile Money</b><small>Airtel Money · TNM Mpamba</small></div>
                   <span className="pill-check">{payment.method === "Mobile Money" && "✓"}</span>
                 </button>
-                <button className={`pay-method${payment.method === "Bank Card" ? " pay-method-active" : ""}`} onClick={() => setPayment({ ...payment, method: "Bank Card" })}>
+                <button className={`pay-method${payment.method === "Bank Card" ? " pay-method-active" : ""}`} onClick={() => { setPaymentError(""); setPayment({ ...payment, method: "Bank Card" }); }}>
                   <CreditCard size={20} />
                   <div className="grow"><b>Bank Card</b><small>Visa · Mastercard</small></div>
                   <span className="pill-check">{payment.method === "Bank Card" && "✓"}</span>
                 </button>
-                <button className={`pay-method${payment.method === "Bank Transfer" ? " pay-method-active" : ""}`} onClick={() => setPayment({ ...payment, method: "Bank Transfer" })}>
+                <button className={`pay-method${payment.method === "Bank Transfer" ? " pay-method-active" : ""}`} onClick={() => { setPaymentError(""); setPayment({ ...payment, method: "Bank Transfer" }); }}>
                   <Landmark size={20} />
                   <div className="grow"><b>Bank Transfer</b><small>National Bank · Standard Bank · FDH</small></div>
                   <span className="pill-check">{payment.method === "Bank Transfer" && "✓"}</span>
@@ -345,13 +409,10 @@ export default function CheckoutPage() {
             </div>
           )}
 
-          {/* Nav buttons */}
-          <div className="row between">
-            <button className="btn btn-ghost" onClick={back} disabled={stepIndex === 0}>
-              <ChevronLeft size={16} /> Back
-            </button>
+          {/* Primary action — full width of the column so it matches the cards */}
+          <div className="checkout-nav">
             {step !== "Review" ? (
-              <button className="btn btn-primary" onClick={next}>
+              <button className="btn btn-primary btn-lg" onClick={next}>
                 Continue <ChevronRight size={16} />
               </button>
             ) : (

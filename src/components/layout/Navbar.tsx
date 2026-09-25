@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Bell, ChevronDown, LayoutDashboard, LogIn, LogOut, Menu, PackageSearch, Search, ShieldCheck, ShoppingCart, Store, User, X } from "lucide-react";
-import { Link, NavLink } from "react-router-dom";
+import { createPortal } from "react-dom";
+import { Bell, ChevronDown, LayoutDashboard, LogIn, LogOut, Menu, Package, PackageSearch, Search, ShieldCheck, ShoppingCart, Store, User, X } from "lucide-react";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import { useCategories } from "../../lib/registry";
 import { useCart } from "../../lib/cart";
 import { useNotifications } from "../../lib/notifications";
-import { useAuth } from "../../lib/auth";
+import { roleLabel, useAuth } from "../../lib/auth";
 import Logo from "../ui/Logo";
 import SearchBar from "../ui/SearchBar";
 import SignInModal from "../auth/SignInModal";
@@ -15,6 +16,7 @@ export default function Navbar() {
   const { unread } = useNotifications();
   const cats = useCategories();
   const { user, signOut } = useAuth();
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -22,6 +24,16 @@ export default function Navbar() {
   const [signInOpen, setSignInOpen] = useState(false);
   const catRef = useRef<HTMLDivElement>(null);
   const acctRef = useRef<HTMLDivElement>(null);
+  const prevPathRef = useRef(location.pathname);
+
+  /* Any navigation closes the mobile curtain and the inline search bar,
+     even if a link inside the menu was tapped without closing first. */
+  useEffect(() => {
+    if (prevPathRef.current === location.pathname) return;
+    prevPathRef.current = location.pathname;
+    setMobileOpen(false);
+    setMobileSearch(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -42,6 +54,22 @@ export default function Navbar() {
   const navLink = ({ isActive }: { isActive: boolean }) =>
     `nav-link${isActive ? " nav-link-active" : ""}`;
 
+  /* Role-specific dashboard link shown in the top bar, dropdown and mobile menu. */
+  const dashboardLink = user
+    ? user.role === "supplier"
+      ? { to: "/supplier", label: "Supplier dashboard", icon: <LayoutDashboard size={15} /> }
+      : user.role === "admin"
+        ? { to: "/admin", label: "Admin dashboard", icon: <ShieldCheck size={15} /> }
+        : null
+    : null;
+  const notificationLink = user
+    ? user.role === "customer"
+      ? "/account/notifications"
+      : user.role === "supplier"
+        ? "/supplier/notifications"
+        : "/admin/notifications"
+    : null;
+
   return (
     <>
     <header className="nav">
@@ -51,10 +79,10 @@ export default function Navbar() {
             <PackageSearch size={13} /> Connecting Healthcare. Delivering Better.
           </span>
           <div className="nav-top-links">
-            <Link to="/become-a-supplier">Become a supplier</Link>
-            <Link to="/orders">Track your order</Link>
+            {user?.role !== "supplier" && user?.role !== "admin" && (
+              <Link to="/become-a-supplier">Become a supplier</Link>
+            )}
             <Link to="/faq">Help & FAQs</Link>
-            <Link to="/supplier">Supplier dashboard</Link>
           </div>
         </div>
       </div>
@@ -87,12 +115,17 @@ export default function Navbar() {
               </div>
             )}
           </div>
+          <NavLink to="/products" className={navLink}>
+            Products
+          </NavLink>
           <NavLink to="/suppliers" className={navLink}>
             Suppliers
           </NavLink>
-          <NavLink to="/orders" className={navLink}>
-            Orders
-          </NavLink>
+          {user?.role === "customer" && (
+            <NavLink to="/orders" className={navLink}>
+              Orders
+            </NavLink>
+          )}
         </nav>
 
         <div className="nav-actions">
@@ -100,12 +133,14 @@ export default function Navbar() {
             <Search size={19} />
           </button>
 
-          <Link to="/account?tab=notifications" className="nav-icon-btn" aria-label="Notifications">
-            <Bell size={19} />
-            {unread > 0 && <span className="nav-badge">{unread}</span>}
-          </Link>
+          {notificationLink && (
+            <Link to={notificationLink} className="nav-icon-btn" aria-label="Notifications">
+              <Bell size={19} />
+              {unread > 0 && <span className="nav-badge">{unread}</span>}
+            </Link>
+          )}
 
-          <Link to="/cart" className="nav-icon-btn" aria-label="Cart">
+          <Link to="/cart" className="nav-icon-btn nav-cart-btn" aria-label="Cart">
             <ShoppingCart size={19} />
             {summary.items > 0 && (
               <span key={summary.items} className="nav-badge cart-bump">
@@ -127,22 +162,44 @@ export default function Navbar() {
                     <div className="nav-account-head">
                       <b>{user.name}</b>
                       <small className="muted">{user.email}</small>
+                      <span className={`badge ${user.role === "admin" ? "badge-amber" : user.role === "supplier" ? "badge-green" : "badge-soft"}`} style={{ marginTop: 6 }}>
+                        {roleLabel(user.role)}
+                      </span>
                     </div>
-                    <Link to="/account" onClick={() => setAccountOpen(false)}>
-                      <User size={15} /> My account
-                    </Link>
-                    <Link to="/account?tab=orders" onClick={() => setAccountOpen(false)}>
-                      <ShoppingCart size={15} /> My orders
-                    </Link>
-                    <Link to="/supplier" onClick={() => setAccountOpen(false)}>
-                      <LayoutDashboard size={15} /> Supplier dashboard
-                    </Link>
-                    <Link to="/become-a-supplier" onClick={() => setAccountOpen(false)}>
-                      <Store size={15} /> Sell on MedLink
-                    </Link>
-                    <Link to="/admin" onClick={() => setAccountOpen(false)}>
-                      <ShieldCheck size={15} /> Admin
-                    </Link>
+
+                    {/* ----- Customer menu ----- */}
+                    {user.role === "customer" && (
+                      <Link to="/account" onClick={() => setAccountOpen(false)}>
+                        <User size={15} /> My account
+                      </Link>
+                    )}
+
+                    {/* ----- Supplier menu ----- */}
+                    {user.role === "supplier" && (
+                      <>
+                        <Link to="/supplier" onClick={() => setAccountOpen(false)}>
+                          <LayoutDashboard size={15} /> Supplier dashboard
+                        </Link>
+                        <div className="nav-account-sep" />
+                        <Link to="/" onClick={() => setAccountOpen(false)}>
+                          <Store size={15} /> Back to marketplace
+                        </Link>
+                      </>
+                    )}
+
+                    {/* ----- Admin menu ----- */}
+                    {user.role === "admin" && (
+                      <>
+                        <Link to="/admin" onClick={() => setAccountOpen(false)}>
+                          <ShieldCheck size={15} /> Admin dashboard
+                        </Link>
+                        <div className="nav-account-sep" />
+                        <Link to="/" onClick={() => setAccountOpen(false)}>
+                          <Store size={15} /> Back to marketplace
+                        </Link>
+                      </>
+                    )}
+
                     <button
                       className="nav-account-signout"
                       onClick={() => {
@@ -180,10 +237,14 @@ export default function Navbar() {
         </div>
       )}
 
-      {/* Mobile menu — dropdown panel under the header (no side drawer) */}
-      {mobileOpen && <div className="nav-menu-scrim" onClick={() => setMobileOpen(false)} />}
-      {mobileOpen && (
-        <div className="nav-menu" role="dialog" aria-modal="true" aria-label="Mobile menu">
+      {/* Mobile menu — portaled to <body> so it is anchored to the viewport
+          wherever the page is scrolled (fixed inside the sticky navbar would
+          pin it to the navbar/document top instead). */}
+      {createPortal(
+        <>
+          {mobileOpen && <div className="nav-menu-scrim" onClick={() => setMobileOpen(false)} />}
+          {mobileOpen && (
+            <div className="nav-menu" role="dialog" aria-modal="true" aria-label="Mobile menu">
           <div className="nav-menu-inner container">
             <div className="nav-menu-head">
               <span className="nav-menu-title">Menu</span>
@@ -203,43 +264,75 @@ export default function Navbar() {
             </button>
 
             <nav aria-label="Mobile">
-              <Link to="/" onClick={() => setMobileOpen(false)}>
-                Home
-              </Link>
               <Link to="/products" onClick={() => setMobileOpen(false)}>
-                All products
+                <Package size={16} /> All products
               </Link>
               <Link to="/suppliers" onClick={() => setMobileOpen(false)}>
-                Suppliers
+                <Store size={16} /> Suppliers
               </Link>
-              <Link to="/orders" onClick={() => setMobileOpen(false)}>
-                Orders
+              <Link to="/cart" onClick={() => setMobileOpen(false)}>
+                <ShoppingCart size={16} /> Cart {summary.items > 0 && `(${summary.items})`}
               </Link>
-              <Link to="/become-a-supplier" onClick={() => setMobileOpen(false)}>
-                Become a supplier
-              </Link>
+              {user?.role !== "supplier" && user?.role !== "admin" && (
+                <Link to="/become-a-supplier" onClick={() => setMobileOpen(false)}>
+                  Become a supplier
+                </Link>
+              )}
               <Link to="/faq" onClick={() => setMobileOpen(false)}>
                 Help & FAQs
               </Link>
-              {user ? (
-                <Link to="/account" onClick={() => setMobileOpen(false)}>
-                  <User size={16} /> My account
+              {user?.role === "customer" && (
+                <>
+                  <Link to="/orders" onClick={() => setMobileOpen(false)}>
+                    <Package size={16} /> Orders
+                  </Link>
+                  <Link to="/account" onClick={() => setMobileOpen(false)}>
+                    <User size={16} /> Account
+                  </Link>
+                </>
+              )}
+              {user && dashboardLink && (
+                <Link to={dashboardLink.to} onClick={() => setMobileOpen(false)}>
+                  {dashboardLink.icon} {dashboardLink.label}
                 </Link>
-              ) : (
+              )}
+              {user && notificationLink && (
+                <Link to={notificationLink} onClick={() => setMobileOpen(false)}>
+                  <Bell size={16} /> Notifications {unread > 0 && `(${unread})`}
+                </Link>
+              )}
+            </nav>
+
+            {user ? (
+              <div className="nav-menu-auth">
+                <div className="nav-menu-user">
+                  <span className="nav-avatar">{initials(user.name)}</span>
+                  <div className="grow">
+                    <b>{user.name}</b>
+                    <small className="muted">{user.email}</small>
+                  </div>
+                </div>
                 <button
-                  className="nav-menu-action"
+                  className="nav-menu-action nav-menu-signout"
                   onClick={() => {
+                    signOut();
                     setMobileOpen(false);
-                    setSignInOpen(true);
                   }}
                 >
-                  <LogIn size={16} /> Sign in
+                  <LogOut size={16} /> Sign out
                 </button>
-              )}
-              <Link to="/supplier" onClick={() => setMobileOpen(false)}>
-                Supplier dashboard
-              </Link>
-            </nav>
+              </div>
+            ) : (
+              <button
+                className="nav-menu-action nav-menu-signin"
+                onClick={() => {
+                  setMobileOpen(false);
+                  setSignInOpen(true);
+                }}
+              >
+                <LogIn size={16} /> Sign in
+              </button>
+            )}
 
             <p className="nav-menu-label">Categories</p>
             <div className="nav-menu-cats">
@@ -254,12 +347,11 @@ export default function Navbar() {
                 </Link>
               ))}
             </div>
-
-            <Link to="/cart" className="btn btn-primary btn-block nav-menu-cart" onClick={() => setMobileOpen(false)}>
-              <ShoppingCart size={16} /> View cart ({summary.items})
-            </Link>
-          </div>
-        </div>
+              </div>
+            </div>
+          )}
+        </>,
+        document.body,
       )}
 
       <SignInModal open={signInOpen} onClose={() => setSignInOpen(false)} />

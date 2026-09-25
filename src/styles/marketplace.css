@@ -726,6 +726,8 @@
   font-weight: 700;
 }
 .pcard-foot {
+  /* Pinned to the bottom of the (fixed-height) card so prices/buttons
+     line up across every card, even when names are 1 vs 2 lines. */
   margin-top: auto;
   display: flex;
   align-items: center;
@@ -733,7 +735,6 @@
   gap: 8px;
   border-top: 1px solid var(--border-soft);
   padding-top: 11px;
-  margin-top: 6px;
 }
 .pcard-add {
   margin-top: 9px;
@@ -755,8 +756,72 @@
   font-weight: 500;
 }
 
+/* Whole-card link: the product name's stretched overlay makes any click
+   on the card navigate to the product page. Interactive pieces inside
+   (wishlist heart, add-to-cart, supplier link) sit above the overlay. */
+.pcard-name::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: calc(var(--r-lg) + 4px);
+}
+.pcard-name:focus-visible::after {
+  outline: 2.5px solid var(--teal);
+  outline-offset: 3px;
+}
+.pcard-add,
+.pcard-supplier {
+  position: relative;
+  z-index: 2;
+}
+
+/* ---------- Product grids ----------
+   Product cards stay in a 2-up grid down to phone widths (a 2x2 layout
+   beats scrolling a single column when there are many products). */
+.p-grid {
+  display: grid;
+  gap: 20px;
+  /* Uniform card heights across the whole grid (same as .grid). */
+  grid-auto-rows: 1fr;
+}
+.p-grid > * {
+  min-width: 0;
+}
+.p-grid-4 {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.p-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 1024px) {
+  .p-grid-4 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 860px) {
+  .p-grid-4,
+  .p-grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .p-grid-4,
+  .p-grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+@media (max-width: 380px) {
+  .p-grid-4,
+  .p-grid-3 {
+    gap: 10px;
+  }
+}
+
 /* ---------- Supplier cards ---------- */
 .scard {
+  position: relative;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -780,7 +845,8 @@
 }
 .scard-body {
   padding: 0 18px 16px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   flex: 1;
 }
@@ -788,19 +854,27 @@
   display: flex;
   align-items: flex-end;
   gap: 13px;
-  margin-top: -12px;
-  position: relative;
+  padding-top: 4px;
 }
+/* The avatar straddles the banner seam. It is absolutely positioned so
+   the name/category column always starts below the banner (previously
+   long names were pushed up and clipped against the banner edge). */
 .scard-head .s-avatar {
+  position: absolute;
+  left: 18px;
+  top: 74px; /* banner (96px) − 22px overlap */
+  z-index: 2;
   border: 4px solid #fff;
   box-shadow: var(--shadow);
   flex: none;
+  pointer-events: none;
 }
 .scard-title {
   display: grid;
   gap: 3px;
   min-width: 0;
-  padding-bottom: 2px;
+  margin-left: 72px;
+  padding: 2px 0;
 }
 .scard-name {
   font-family: var(--font-display);
@@ -816,11 +890,26 @@
 .scard-name:hover {
   color: var(--teal-600);
 }
+/* Whole-card link: clicking anywhere on a supplier card goes to the
+   store. The arrow button and call-to-action sit above the overlay. */
+.scard-name::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: calc(var(--r-lg) + 4px);
+}
+.scard-name:focus-visible::after {
+  outline: 2.5px solid var(--teal);
+  outline-offset: 3px;
+}
 .scard-cat {
   font-weight: 500;
 }
 .scard-go {
   margin-left: auto;
+  position: relative;
+  z-index: 3;
   width: 34px;
   height: 34px;
   border-radius: 10px;
@@ -854,7 +943,9 @@
   color: var(--teal-600);
 }
 .scard-link {
-  margin-top: 2px;
+  margin-top: auto; /* "Visit store" pins to the bottom of the card */
+  position: relative;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1520,6 +1611,19 @@
   position: sticky;
   top: calc(var(--nav-h) + 20px);
 }
+/* Checkout navigation — the primary action spans the full column width so
+   it lines up with the cards above it (same behavior on mobile). */
+.checkout-nav {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+}
+.checkout-nav .btn {
+  width: 100%;
+  justify-content: center;
+  padding-block: 13px;
+  font-size: 14.5px;
+}
 .delivery-note {
   display: flex;
   gap: 12px;
@@ -1825,41 +1929,82 @@
 }
 
 /* ---------- Account ---------- */
-.acct-nav {
-  padding: 12px;
-  position: sticky;
-  top: calc(var(--nav-h) + 20px);
+/* The account page is a sectioned settings page, not a tab hub: /account
+   lists each section as a row inside its own card group, and tapping a row
+   navigates to that section's page (/account/saved, /account/profile, ...).
+   Each section's content lives in its own card(s) on the section page. */
+.acct-hub {
+  max-width: 660px;
+  display: grid;
+  gap: 24px;
 }
-.acct-nav-item {
+.setting-group {
+  padding: 6px;
+}
+.setting-row {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 11px 13px;
-  border-radius: 11px;
-  font-size: 14px;
-  font-weight: 500;
+  gap: 13px;
+  padding: 12px;
+  border-radius: 12px;
   color: var(--ink);
-  transition: background 0.14s, color 0.14s;
   text-align: left;
+  font: inherit;
+  transition: background 0.14s;
 }
-.acct-nav-item:hover {
+.setting-row:hover {
   background: var(--navy-soft);
 }
-.acct-nav-item.active {
-  background: var(--navy);
-  color: #fff;
+.setting-row + .setting-row {
+  margin-top: 2px;
+}
+.setting-row b {
+  display: block;
+  font-size: 14.5px;
+  line-height: 1.35;
+}
+.setting-row small {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.setting-row-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--navy-soft);
+  color: var(--navy);
+  flex: none;
+}
+.setting-row.danger b,
+.setting-row.danger .setting-row-icon {
+  color: #e11d48;
+}
+.setting-row.danger .setting-row-icon {
+  background: #fde8ef;
+}
+/* Back link on section pages */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
   font-weight: 600;
+  color: var(--muted);
+  transition: color 0.14s;
 }
-.acct-nav-item .snav-count {
-  margin-left: auto;
-  background: linear-gradient(135deg, #ffc868, #fb923c);
-  color: #45290a;
+.back-link:hover {
+  color: var(--teal-600);
 }
-.acct-nav-foot {
-  margin-top: 10px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-soft);
+/* Notification list on the notifications section page (reuses the
+   notification-card pattern from the top-bar panels). */
+.notification-card {
+  background: #fff;
+  cursor: pointer;
 }
 .dash-grid {
   grid-template-columns: repeat(4, 1fr);
@@ -2337,12 +2482,83 @@
   .store-banner {
     height: 160px;
   }
+  .store-head {
+    margin-top: -64px;
+    padding: 18px 16px 0;
+  }
   .review-line {
     flex-wrap: wrap;
   }
   .spec-row {
     grid-template-columns: 1fr;
     gap: 2px;
+  }
+  /* Compact stepper: dots only, labels drop off on phones */
+  .stepper-step {
+    min-width: 34px;
+  }
+  .stepper-step b {
+    display: none;
+  }
+  .stepper-line {
+    left: calc(50% + 16px);
+    right: calc(-50% + 16px);
+  }
+
+  /* Compact product cards for the 2-up mobile grid: shorter image,
+     one-line name, dot-only stock indicator, tight footer + CTA */
+  .pcard {
+    padding: 8px;
+    border-radius: 16px;
+  }
+  .pcard-img-wrap {
+    border-radius: 12px;
+  }
+  .pcard-flag {
+    top: 8px;
+    left: 8px;
+    font-size: 9.5px;
+    padding: 3px 8px;
+  }
+  .wish-btn {
+    top: 8px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+  }
+  .pcard-body {
+    padding: 9px 2px 2px;
+    gap: 4px;
+  }
+  .pcard-name {
+    font-size: 13px;
+    line-height: 1.3;
+    min-height: 0;
+  }
+  .pcard-supplier {
+    display: none;
+  }
+  .pcard-foot {
+    padding-top: 7px;
+    margin-top: auto;
+    gap: 4px;
+  }
+  .pcard .price-md {
+    font-size: 14.5px;
+  }
+  .pcard .stock {
+    font-size: 0; /* availability shown as a dot only */
+    gap: 0;
+  }
+  .pcard .stock .dot {
+    width: 7px;
+    height: 7px;
+  }
+  .pcard-add {
+    margin-top: 7px;
+    padding-block: 8px;
+    font-size: 12.5px;
+    border-radius: 10px;
   }
 }
 @media (max-width: 420px) {

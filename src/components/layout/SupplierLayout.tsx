@@ -5,6 +5,7 @@ import {
   ClipboardList,
   ExternalLink,
   LayoutDashboard,
+  LogOut,
   Menu,
   Package,
   Settings,
@@ -14,8 +15,9 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { currentSupplierId, supplierById } from "../../data/suppliers";
+import { useAuth } from "../../lib/auth";
 import { useNotifications } from "../../lib/notifications";
 import { SupplierAvatar } from "../marketplace/SupplierCard";
 import Logo from "../ui/Logo";
@@ -33,13 +35,15 @@ const navItems = [
 
 export default function SupplierLayout() {
   const supplier = supplierById(currentSupplierId);
+  const { signOut } = useAuth();
   const { unread } = useNotifications();
   const [drawer, setDrawer] = useState(false);
-  const location = useLocation();
+  const navigate = useNavigate();
 
-  useEffect(() => {
-    setDrawer(false);
-  }, [location.pathname]);
+  const signOutAndReturnHome = () => {
+    signOut();
+    navigate("/");
+  };
 
   useEffect(() => {
     document.body.style.overflow = drawer ? "hidden" : "";
@@ -77,7 +81,7 @@ export default function SupplierLayout() {
 
       <nav className="snav-nav" aria-label="Supplier">
         {navItems.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>
+          <NavLink key={item.to} to={item.to} end={item.end} className={linkClass} onClick={() => setDrawer(false)}>
             <item.icon size={18} strokeWidth={1.9} />
             {item.label}
             {item.label === "Orders" && (
@@ -88,10 +92,10 @@ export default function SupplierLayout() {
       </nav>
 
       <div className="snav-foot">
-        <Link to={`/suppliers/${supplier.slug}`} className="snav-link">
+        <Link to={`/suppliers/${supplier.slug}`} className="snav-link" onClick={() => setDrawer(false)}>
           <ExternalLink size={15} /> View storefront
         </Link>
-        <Link to="/" className="snav-link">
+        <Link to="/" className="snav-link" onClick={() => setDrawer(false)}>
           <Store size={15} /> Back to marketplace
         </Link>
       </div>
@@ -113,10 +117,13 @@ export default function SupplierLayout() {
             <h2 className="small">{supplier.name}</h2>
           </div>
           <div className="supplier-topbar-actions">
-            <Link to="/account?tab=notifications" className="nav-icon-btn" aria-label="Notifications">
+            <Link to="/supplier/notifications" className="nav-icon-btn" aria-label="Notifications">
               <Bell size={19} />
               {unread > 0 && <span className="nav-badge">{unread}</span>}
             </Link>
+            <button className="nav-icon-btn" onClick={signOutAndReturnHome} aria-label="Sign out" title="Sign out">
+              <LogOut size={18} />
+            </button>
             <Link to="/" className="btn btn-outline btn-sm">
               Marketplace
             </Link>

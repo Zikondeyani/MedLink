@@ -167,7 +167,7 @@ export default function SupplierStorePage() {
 
         {/* Tab: categories */}
         {tab === "categories" && (
-          <div className="grid grid-3" style={{ marginTop: 24 }}>
+          <div className="p-grid p-grid-3" style={{ marginTop: 24 }}>
             {productCats.map((c) => (
               <button
                 key={c.id}

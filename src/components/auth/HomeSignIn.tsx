@@ -1,18 +1,12 @@
 import { useState } from "react";
-import { LogIn, Mail, ShieldCheck, Truck, User, Wallet } from "lucide-react";
-import { useAuth, nameFromEmail } from "../../lib/auth";
+import { ArrowRight, LockKeyhole, LogIn, Mail } from "lucide-react";
+import { Link } from "react-router-dom";
+import { useAuth, authenticate, roleLabel } from "../../lib/auth";
 import { useToast } from "../../lib/toast";
-
-const perks = [
-  { icon: <Truck size={15} />, label: "Track every order live — from checkout to delivery" },
-  { icon: <Wallet size={15} />, label: "Save addresses & payment methods for one-tap reorder" },
-  { icon: <ShieldCheck size={15} />, label: "Faster support and buyer protection on your purchases" },
-];
 
 export default function HomeSignIn() {
   const { signIn } = useAuth();
   const { push } = useToast();
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -29,9 +23,21 @@ export default function HomeSignIn() {
       setError("Password must be at least 6 characters.");
       return;
     }
-    const displayName = name.trim() || nameFromEmail(email.trim());
-    signIn({ name: displayName, email: email.trim() });
-    push({ title: "You're signed in", message: `Welcome to MedLink, ${displayName.split(" ")[0]}.`, icon: "success" });
+    const result = authenticate(email, password);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    const { user } = result;
+    signIn(user);
+    push({
+      title: "You're signed in",
+      message: `Welcome back, ${user.name.split(" ")[0]} — signed in as a ${roleLabel(user.role).toLowerCase()}.`,
+      icon: "success",
+    });
+    setEmail("");
+    setPassword("");
+    setError("");
   }
 
   return (
@@ -42,29 +48,12 @@ export default function HomeSignIn() {
             <span className="eyebrow">Your MedLink account</span>
             <h2 className="h-section">Sign in to order faster</h2>
             <p className="muted">
-              Join buyers across Malawi who use MedLink to keep their facilities stocked. Creating an account
-              takes seconds and is completely free.
+              Sign in to your MedLink account. New customers can create one below.
             </p>
-            <ul className="home-signin-perks">
-              {perks.map((p) => (
-                <li key={p.label}>
-                  <span className="home-signin-perk-icon">{p.icon}</span>
-                  {p.label}
-                </li>
-              ))}
-            </ul>
           </div>
 
           <form className="card card-pad home-signin-form" onSubmit={submit}>
-            <h3 className="h-card">Sign in / create account</h3>
-            <label className="field">
-              <span>Full name <em className="muted">(optional)</em></span>
-              <div className="input-wrap">
-                <User size={16} className="muted" />
-                <input className="input" placeholder="e.g. Thandiwe Banda" value={name}
-                  onChange={(e) => setName(e.target.value)} aria-label="Full name" />
-              </div>
-            </label>
+            <h3 className="h-card">Sign in to MedLink</h3>
             <label className="field">
               <span>Email *</span>
               <div className="input-wrap">
@@ -75,15 +64,21 @@ export default function HomeSignIn() {
             </label>
             <label className="field">
               <span>Password *</span>
-              <input className="input" type="password" placeholder="At least 6 characters" value={password}
-                onChange={(e) => setPassword(e.target.value)} aria-label="Password" />
+              <div className="input-wrap">
+                <LockKeyhole size={16} className="muted" />
+                <input className="input" type="password" placeholder="At least 6 characters" value={password}
+                  onChange={(e) => setPassword(e.target.value)} aria-label="Password" />
+              </div>
             </label>
             {error && <p className="small red">{error}</p>}
             <button className="btn btn-primary btn-block btn-lg" type="submit">
-              <LogIn size={16} /> Sign in to MedLink
+              <LogIn size={16} /> Continue
             </button>
             <p className="xs muted" style={{ textAlign: "center", marginTop: 10 }}>
-              Demo build — any email and password will sign you in.
+              Selling on MedLink?{" "}
+              <Link to="/become-a-supplier" className="link">
+                Apply as a supplier <ArrowRight size={12} style={{ verticalAlign: -2 }} />
+              </Link>
             </p>
           </form>
         </div>

@@ -1,8 +1,10 @@
-import type { Order, SupplierOrder } from "./types";
+import type { Order, SavedAddress, SupplierOrder } from "./types";
 
 /* ============================================================
    Customer orders — the signed-in customer's orders
    ============================================================ */
+
+export const DEMO_BUYER_EMAIL = "buyer@medlink.mw";
 
 export const customerProfile = {
   name: "Thandiwe Banda",
@@ -13,8 +15,10 @@ export const customerProfile = {
   memberSince: "March 2024",
 };
 
-export const savedAddresses = [
+export const savedAddresses: SavedAddress[] = [
   {
+    id: "addr-demo-clinic",
+    customerEmail: DEMO_BUYER_EMAIL,
     label: "Clinic",
     fullName: "Thandiwe Banda",
     phone: "+265 888 912 345",
@@ -25,6 +29,8 @@ export const savedAddresses = [
     isDefault: true,
   },
   {
+    id: "addr-demo-home",
+    customerEmail: DEMO_BUYER_EMAIL,
     label: "Home",
     fullName: "Thandiwe Banda",
     phone: "+265 888 912 345",
@@ -39,6 +45,7 @@ export const savedAddresses = [
 export const customerOrders: Order[] = [
   {
     id: "ord-001",
+    customerEmail: DEMO_BUYER_EMAIL,
     number: "ML-20260922-001",
     placedAt: "2026-09-22T09:41:00+02:00",
     customerName: "Thandiwe Banda",
@@ -82,9 +89,10 @@ export const customerOrders: Order[] = [
         image: "gloves",
       },
     ],
-    subtotal: 206000,
+    subtotal: 271000,
+    serviceFee: 27100,
     deliveryFee: 5000,
-    total: 211000,
+    total: 303100,
     status: "out_for_delivery",
     payment: { method: "Mobile Money", reference: "Airtel · xx3451" },
     estimatedDelivery: "23 Sep, Tomorrow",
@@ -97,6 +105,7 @@ export const customerOrders: Order[] = [
   },
   {
     id: "ord-002",
+    customerEmail: DEMO_BUYER_EMAIL,
     number: "ML-20260918-014",
     placedAt: "2026-09-18T14:02:00+02:00",
     customerName: "Thandiwe Banda",
@@ -131,8 +140,9 @@ export const customerOrders: Order[] = [
       },
     ],
     subtotal: 56000,
+    serviceFee: 5600,
     deliveryFee: 4500,
-    total: 60500,
+    total: 66100,
     status: "delivered",
     payment: { method: "Bank Card", reference: "Mastercard · xx8820" },
     estimatedDelivery: "19 Sep",
@@ -146,6 +156,7 @@ export const customerOrders: Order[] = [
   },
   {
     id: "ord-003",
+    customerEmail: DEMO_BUYER_EMAIL,
     number: "ML-20260910-008",
     placedAt: "2026-09-10T11:23:00+02:00",
     customerName: "Thandiwe Banda",
@@ -180,8 +191,9 @@ export const customerOrders: Order[] = [
       },
     ],
     subtotal: 1040000,
+    serviceFee: 104000,
     deliveryFee: 8000,
-    total: 1048000,
+    total: 1152000,
     status: "delivered",
     payment: { method: "Bank Transfer", reference: "Transfer from BandaCare Clinic" },
     estimatedDelivery: "13 Sep",
@@ -195,6 +207,7 @@ export const customerOrders: Order[] = [
   },
   {
     id: "ord-004",
+    customerEmail: DEMO_BUYER_EMAIL,
     number: "ML-20260830-021",
     placedAt: "2026-08-30T10:15:00+02:00",
     customerName: "Thandiwe Banda",
@@ -229,8 +242,9 @@ export const customerOrders: Order[] = [
       },
     ],
     subtotal: 84000,
+    serviceFee: 8400,
     deliveryFee: 5500,
-    total: 89500,
+    total: 97900,
     status: "delivered",
     payment: { method: "Mobile Money", reference: "TNM Mpamba · xx9021" },
     estimatedDelivery: "31 Aug",
@@ -244,6 +258,7 @@ export const customerOrders: Order[] = [
   },
   {
     id: "ord-005",
+    customerEmail: DEMO_BUYER_EMAIL,
     number: "ML-20260812-005",
     placedAt: "2026-08-12T16:44:00+02:00",
     customerName: "Thandiwe Banda",
@@ -268,8 +283,9 @@ export const customerOrders: Order[] = [
       },
     ],
     subtotal: 620000,
+    serviceFee: 62000,
     deliveryFee: 6000,
-    total: 626000,
+    total: 688000,
     status: "delivered",
     payment: { method: "Bank Transfer", reference: "Transfer from BandaCare Clinic" },
     estimatedDelivery: "14 Aug",
@@ -295,6 +311,7 @@ export function customerOrderById(id: string): Order | undefined {
 export const supplierOrders: SupplierOrder[] = [
   {
     id: "sord-001",
+    supplierId: "sup-medequip",
     number: "ML-20260922-001",
     placedAt: "2026-09-22T09:41:00+02:00",
     customerName: "Thandiwe Banda",
@@ -316,6 +333,7 @@ export const supplierOrders: SupplierOrder[] = [
   },
   {
     id: "sord-002",
+    supplierId: "sup-medequip",
     number: "ML-20260921-019",
     placedAt: "2026-09-21T13:17:00+02:00",
     customerName: "Dr. Kelvin Mwale",
@@ -337,6 +355,7 @@ export const supplierOrders: SupplierOrder[] = [
   },
   {
     id: "sord-003",
+    supplierId: "sup-medequip",
     number: "ML-20260919-007",
     placedAt: "2026-09-19T10:02:00+02:00",
     customerName: "Pharmacy ABC",
@@ -358,6 +377,7 @@ export const supplierOrders: SupplierOrder[] = [
   },
   {
     id: "sord-004",
+    supplierId: "sup-medequip",
     number: "ML-20260918-011",
     placedAt: "2026-09-18T15:30:00+02:00",
     customerName: "Lilongwe Lab Services",
@@ -379,6 +399,7 @@ export const supplierOrders: SupplierOrder[] = [
   },
   {
     id: "sord-005",
+    supplierId: "sup-medequip",
     number: "ML-20260912-003",
     placedAt: "2026-09-12T08:55:00+02:00",
     customerName: "St. Mary's Hospital",
@@ -400,6 +421,7 @@ export const supplierOrders: SupplierOrder[] = [
   },
   {
     id: "sord-006",
+    supplierId: "sup-medequip",
     number: "ML-20260908-015",
     placedAt: "2026-09-08T12:20:00+02:00",
     customerName: "Dr. Amina Yusuf",
@@ -421,6 +443,7 @@ export const supplierOrders: SupplierOrder[] = [
   },
   {
     id: "sord-007",
+    supplierId: "sup-medequip",
     number: "ML-20260902-022",
     placedAt: "2026-09-02T09:10:00+02:00",
     customerName: "Pharmacy ABC",
@@ -441,6 +464,7 @@ export const supplierOrders: SupplierOrder[] = [
   },
   {
     id: "sord-008",
+    supplierId: "sup-medequip",
     number: "ML-20260826-009",
     placedAt: "2026-08-26T14:48:00+02:00",
     customerName: "Kawale Health Centre",

@@ -74,7 +74,10 @@
   min-width: 0;
 }
 .faq-body {
-  padding: 28px 0 72px;
+  /* padding-block keeps .container's inline gutters — a padding shorthand
+     here used to zero the horizontal padding, making FAQ content run
+     edge-to-edge while every other page stayed within margins. */
+  padding-block: 28px 72px;
 }
 .faq-chips {
   display: flex;
@@ -384,6 +387,9 @@
   padding-top: 18px;
   border-top: 1px solid rgba(20, 16, 10, 0.1);
 }
+.apply-nav .btn-primary {
+  min-width: 240px;
+}
 .apply-aside {
   display: grid;
   align-content: start;
@@ -662,6 +668,16 @@
   .field-split {
     grid-template-columns: 1fr !important;
   }
+  .auth-simple-page {
+    max-width: 460px;
+  }
+  .apply-nav {
+    flex-wrap: wrap;
+  }
+  .apply-nav .btn-primary {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
   .apply-steps {
     gap: 6px;
   }
@@ -781,4 +797,157 @@
   .kyc-grid-list {
     grid-template-columns: 1fr;
   }
+}
+/* ---------- Role-based auth UI ---------- */
+
+/* Divider between grouped links in the account dropdown */
+.nav-account-sep {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 6px 4px;
+}
+
+/* Segmented Sign up / Sign in toggle (SignUpPage) */
+.auth-mode-seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 12px;
+  background: var(--navy-soft);
+  margin-bottom: 22px;
+}
+.seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--navy);
+  cursor: pointer;
+  transition: all 0.18s var(--ease);
+}
+.seg-btn:hover {
+  color: var(--teal-600);
+}
+.seg-btn-active {
+  background: #fff;
+  border-color: var(--border);
+  color: var(--ink);
+  box-shadow: 0 4px 14px -8px rgba(11, 17, 32, 0.25);
+}
+
+/* Small demo-account hint under auth forms */
+.auth-demo-hint {
+  margin-top: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+/* Credentials card on the supplier application success screen */
+.credentials-card {
+  border: 1px dashed var(--border);
+  background: var(--navy-soft);
+  padding: 16px 18px;
+  border-radius: 14px;
+}
+.credentials-card .credentials-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--border-soft);
+  font-size: 13px;
+}
+.credentials-card .credentials-row span {
+  color: var(--muted);
+}
+.credentials-card .credentials-row:last-of-type {
+  border-bottom: none;
+}
+
+/* Links under the home sign-in form */
+.home-signin-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ---------- Compact auth pages ---------- */
+
+.auth-simple-page {
+  max-width: 640px;
+  padding-top: 40px;
+  padding-bottom: 60px;
+}
+.auth-simple {
+  box-shadow: var(--shadow);
+  border-color: rgba(255, 183, 77, 0.4);
+}
+.auth-simple-head {
+  margin-bottom: 18px;
+}
+.auth-simple-head .eyebrow {
+  display: block;
+  margin-bottom: 4px;
+}
+
+/* ---------- Auth modal & CTA polish ---------- */
+
+.auth-modal-desc {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* "or" divider between the form and the sign-up CTAs */
+.auth-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-block: 2px;
+  color: var(--muted-2);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.auth-or::before,
+.auth-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-soft);
+}
+
+/* Full-width CTA buttons with icon left and arrow right */
+.auth-cta {
+  justify-content: flex-start;
+  padding-block: 11px;
+}
+.auth-cta .grow {
+  text-align: left;
+}
+
+/* Caption above each auth CTA (e.g. "New to MedLink?") */
+.auth-cta-block .xs {
+  display: block;
+  margin-bottom: 6px;
+}
+
+/* Sign-up page: keep breathing room between fields */
+.auth-simple form {
+  display: grid;
+  gap: 14px;
+}
+.auth-simple form .btn {
+  margin-top: 2px;
 }

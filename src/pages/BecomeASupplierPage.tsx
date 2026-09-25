@@ -22,10 +22,14 @@ import {
 import { Link } from "react-router-dom";
 import type { SupplierApplication } from "../data/types";
 import { useApplications, submitSupplierApplication, useCategories } from "../lib/registry";
+import { registerAccount, useAuth } from "../lib/auth";
 import { useToast } from "../lib/toast";
 import { shortDate } from "../lib/format";
 
 type Step = 1 | 2 | 3 | 4 | 5;
+
+/** Temporary sign-in password issued to newly registered suppliers (demo). */
+const SUPPLIER_DEFAULT_PASSWORD = "medlink123";
 
 const stepTitles: { n: Step; label: string }[] = [
   { n: 1, label: "Business" },
@@ -144,11 +148,13 @@ export default function BecomeASupplierPage() {
   const categories = useCategories();
   const applications = useApplications();
   const { push } = useToast();
+  const { signIn } = useAuth();
 
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [docs, setDocs] = useState<Record<string, Doc>>({ reg: null, tax: null, id: null });
   const [done, setDone] = useState<SupplierApplication | null>(null);
+  const [createdAccount, setCreatedAccount] = useState<{ email: string; password: string } | null>(null);
   const [tried, setTried] = useState(false);
   const [refInput, setRefInput] = useState("");
   const [checkedApp, setCheckedApp] = useState<SupplierApplication | "notfound" | null>(null);
@@ -240,7 +246,26 @@ export default function BecomeASupplierPage() {
     });
     setDone(app);
     setCheckedApp(null);
-    push({ title: "Application submitted", message: `Reference ${app.ref} — our team will review your KYC within 2–3 working days.`, icon: "success" });
+    // Registered suppliers get a sign-in account with the supplier role —
+    // sign them in right away so their supplier dashboard is accessible.
+    const created = registerAccount({
+      name: form.directorName.trim(),
+      email: form.email.trim(),
+      password: SUPPLIER_DEFAULT_PASSWORD,
+      role: "supplier",
+    });
+    if (created.ok) {
+      signIn({ name: created.account.name, email: created.account.email, role: "supplier" });
+      setCreatedAccount({ email: created.account.email, password: SUPPLIER_DEFAULT_PASSWORD });
+      push({
+        title: "Application submitted",
+        message: `Reference ${app.ref} — welcome aboard, ${form.directorName.trim().split(" ")[0]}! Your supplier account is ready and KYC review takes 2–3 working days.`,
+        icon: "success",
+      });
+    } else {
+      setCreatedAccount(null);
+      push({ title: "Application submitted", message: `Reference ${app.ref} — our team will review your KYC within 2–3 working days.`, icon: "success" });
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -272,6 +297,24 @@ export default function BecomeASupplierPage() {
               check your KYC status.
             </p>
             <div className="ref-chip">Reference: <b>{done.ref}</b></div>
+
+            {createdAccount && (
+              <div className="card credentials-card" style={{ maxWidth: 460, margin: "16px auto 0", textAlign: "left" }}>
+                <div className="row" style={{ gap: 8, marginBottom: 8 }}>
+                  <User size={16} className="teal" />
+                  <b className="small">Your supplier sign-in is ready</b>
+                </div>
+                <p className="xs muted" style={{ marginBottom: 10 }}>
+                  We created a supplier account so you can track your store once KYC is approved. Sign in with the
+                  details below on any MedLink page.
+                </p>
+                <div className="credentials-row"><span>Email</span><b>{createdAccount.email}</b></div>
+                <div className="credentials-row"><span>Temporary password</span><b>{createdAccount.password}</b></div>
+                <Link to="/supplier" className="btn btn-primary btn-block" style={{ marginTop: 12 }}>
+                  Go to supplier dashboard <ArrowRight size={15} />
+                </Link>
+              </div>
+            )}
 
             <div className="kyc-track">
               {kycSteps.map((s, i) => {

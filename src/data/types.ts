@@ -31,6 +31,8 @@ export interface SupplierOperatingAccount {
 
 export interface Supplier {
   id: string;
+  /** KYC application that created this supplier tenant, when applicable. */
+  applicationId?: string;
   name: string;
   slug: string;
   color: string;
@@ -77,6 +79,8 @@ export interface PaymentTransaction {
   id: string;
   /** buyer-facing order, absent when the payment failed before an order was created */
   orderId?: string;
+  /** Authenticated buyer who owns the order, when known. */
+  customerEmail?: string;
   orderNumber: string;
   customerName: string;
   method: PaymentMethod;
@@ -149,6 +153,12 @@ export interface DeliveryAddress {
   label?: string;
 }
 
+export interface SavedAddress extends DeliveryAddress {
+  id: string;
+  customerEmail: string;
+  isDefault: boolean;
+}
+
 export type PaymentMethod = "Mobile Money" | "Bank Card" | "Bank Transfer";
 
 export interface PaymentInfo {
@@ -183,12 +193,16 @@ export interface OrderTimelineEntry {
 
 export interface Order {
   id: string;
+  /** Authenticated account that owns this order. */
+  customerEmail: string;
   number: string;
   placedAt: string;
   customerName: string;
   address: DeliveryAddress;
   lines: OrderLine[];
   subtotal: number;
+  /** MedLink service fee captured for this order, when available. */
+  serviceFee?: number;
   deliveryFee: number;
   total: number;
   status: CustomerOrderStatus;
@@ -211,6 +225,12 @@ export interface SupplierOrderLine {
 
 export interface SupplierOrder {
   id: string;
+  /** Canonical customer order this projection was derived from, when applicable. */
+  orderId?: string;
+  /** Authenticated buyer, when this is a checkout-created projection. */
+  customerEmail?: string;
+  /** Supplier tenant allowed to view and fulfil this order. */
+  supplierId: string;
   number: string;
   placedAt: string;
   customerName: string;
@@ -236,6 +256,11 @@ export interface NotificationItem {
   time: string;
   read: boolean;
   icon: "package" | "truck" | "wallet" | "info";
+  /** Optional ownership/tenant scope used by the notification provider. */
+  customerEmail?: string;
+  supplierId?: string;
+  orderId?: string;
+  orderNumber?: string;
 }
 
 /* ---- Supplier onboarding / KYC ---- */

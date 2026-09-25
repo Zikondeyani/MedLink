@@ -6,12 +6,13 @@ import EmptyState from "../components/ui/EmptyState";
 type Sort = "rating" | "products" | "newest";
 
 export default function SuppliersPage() {
-  const suppliers = useSuppliers().filter((s) => !s.suspended);
+  const allSuppliers = useSuppliers();
+  const suppliers = useMemo(() => allSuppliers.filter((s) => !s.suspended), [allSuppliers]);
   const [q, setQ] = useState("");
   const [city, setCity] = useState("All");
   const [sort, setSort] = useState<Sort>("rating");
 
-  const cities = useMemo(() => ["All", ...new Set(suppliers.map((s) => s.location.city))], []);
+  const cities = useMemo(() => ["All", ...new Set(suppliers.map((s) => s.location.city))], [suppliers]);
 
   const results = useMemo(() => {
     let list = [...suppliers];
@@ -34,7 +35,7 @@ export default function SuppliersPage() {
         break;
     }
     return list;
-  }, [q, city, sort]);
+  }, [q, city, sort, suppliers]);
 
   return (
     <div className="page suppliers-page">

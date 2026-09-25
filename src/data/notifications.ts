@@ -86,3 +86,33 @@ export const supplierNotifications: NotificationItem[] = [
     icon: "info",
   },
 ];
+
+export const adminNotifications: NotificationItem[] = [
+  {
+    id: "an1",
+    type: "system",
+    title: "KYC review queue updated",
+    message: "New supplier applications are waiting for platform review.",
+    time: "12m ago",
+    read: false,
+    icon: "info",
+  },
+  {
+    id: "an2",
+    type: "payment",
+    title: "Escrow reconciliation ready",
+    message: "Yesterday's marketplace payments are ready to reconcile.",
+    time: "1h ago",
+    read: false,
+    icon: "wallet",
+  },
+  {
+    id: "an3",
+    type: "system",
+    title: "Platform security check complete",
+    message: "All protected administrative areas are available for this session.",
+    time: "Yesterday",
+    read: true,
+    icon: "info",
+  },
+];

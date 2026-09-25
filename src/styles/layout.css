@@ -369,7 +369,9 @@
   padding-bottom: 14px;
 }
 
-/* Mobile menu (dropdown panel under the header — in-flow, no viewport overflow) */
+/* Mobile menu — rendered via portal to <body> so it is anchored to the
+   VIEWPORT (position: fixed), not to the sticky navbar or the document
+   top. Previously it opened off-screen when the page was scrolled down. */
 .nav-menu-scrim {
   position: fixed;
   inset: 0;
@@ -379,8 +381,8 @@
   animation: fadeIn 0.2s var(--ease);
 }
 .nav-menu {
-  position: absolute;
-  top: 100%;
+  position: fixed;
+  top: var(--nav-h);
   left: 0;
   right: 0;
   z-index: 120;
@@ -460,6 +462,52 @@
 }
 .nav-menu-cart {
   margin-top: 16px;
+}
+/* Signed-in identity + sign out at the bottom of the drawer. Mirrors the
+   actual auth state (the old drawer could show a leftover "Sign in" for
+   users who were already signed in). */
+.nav-menu-auth {
+  margin-bottom: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+  display: grid;
+  gap: 6px;
+}
+.nav-menu-user {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 2px 12px 4px;
+  min-width: 0;
+}
+.nav-menu-user .nav-avatar {
+  flex: none;
+}
+.nav-menu-user b {
+  display: block;
+  font-size: 14.5px;
+  line-height: 1.3;
+}
+.nav-menu-user small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-menu-signout {
+  color: var(--red, #e11d48);
+}
+.nav-menu-signin {
+  justify-content: center;
+  color: #fff;
+  background: var(--navy);
+  box-shadow: 0 10px 22px -14px rgba(11, 17, 32, 0.85);
+}
+.nav-menu-signin:hover {
+  color: #fff;
+  background: var(--navy-700);
 }
 
 /* ---------- Mobile bottom nav ---------- */
@@ -803,6 +851,10 @@
   }
   .nav-burger {
     display: inline-grid;
+  }
+  /* Cart lives in the bottom nav on mobile — hide the duplicate icon. */
+  .nav-cart-btn {
+    display: none;
   }
   .mnav {
     display: flex;

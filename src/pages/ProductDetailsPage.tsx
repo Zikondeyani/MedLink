@@ -12,6 +12,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { categoryById, categoryName } from "../data/categories";
 import { activeProducts, productBySlug } from "../data/products";
 import { supplierById } from "../data/suppliers";
+import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
 import { useToast } from "../lib/toast";
 import { useWishlist } from "../lib/wishlist";
@@ -33,6 +34,7 @@ export default function ProductDetailsPage() {
   const { add } = useCart();
   const { push } = useToast();
   const { has, toggle } = useWishlist();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   const related = useMemo(() => {
@@ -66,7 +68,7 @@ export default function ProductDetailsPage() {
     <div className="page product-page container">
       {/* Breadcrumb */}
       <nav className="breadcrumb small muted" aria-label="Breadcrumb">
-        <Link to="/">Home</Link>
+        <Link to="/">{user ? "Dashboard" : "Home"}</Link>
         <ChevronRight size={13} />
         <Link to="/products">Products</Link>
         <ChevronRight size={13} />
@@ -256,7 +258,7 @@ export default function ProductDetailsPage() {
       {related.length > 0 && (
         <section style={{ marginTop: 48 }}>
           <h2 className="h-section" style={{ marginBottom: 20 }}>Related products</h2>
-          <div className="grid grid-auto">
+          <div className="p-grid p-grid-4">
             {related.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}

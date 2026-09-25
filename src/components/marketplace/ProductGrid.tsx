@@ -15,7 +15,7 @@ export default function ProductGrid({
 }) {
   if (loading) {
     return (
-      <div className={`grid ${cols === 4 ? "grid-auto" : "grid-3"}`}>
+      <div className={`p-grid ${cols === 4 ? "p-grid-4" : "p-grid-3"}`}>
         {[...Array(skeletonCount)].map((_, i) => (
           <ProductCardSkeleton key={i} />
         ))}
@@ -24,7 +24,7 @@ export default function ProductGrid({
   }
 
   return (
-    <div className={`grid ${cols === 4 ? "grid-auto" : "grid-3"}`}>
+    <div className={`p-grid ${cols === 4 ? "p-grid-4" : "p-grid-3"}`}>
       {products.map((p) => (
         <ProductCard key={p.id} product={p} />
       ))}

@@ -41,7 +41,7 @@ export default function AdminOrdersPage() {
       header: "Order",
       render: (o) => (
         <div>
-          <Link to={`/orders/${o.id}`} className="small bold link">{o.number}</Link>
+          <Link to={`/admin/orders/${o.id}`} className="small bold link">{o.number}</Link>
           <div className="xs muted">{shortDate(o.placedAt)}</div>
         </div>
       ),
