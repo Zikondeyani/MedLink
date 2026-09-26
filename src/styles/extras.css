@@ -174,6 +174,54 @@
 }
 
 /* ============================================================
+   KYC status banner — shown above every page while a supplier
+   account is waiting on (or has failed) verification.
+   ============================================================ */
+.kyc-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-bottom: 1px solid transparent;
+}
+.kyc-banner b {
+  display: block;
+}
+.kyc-banner p {
+  margin: 0;
+  color: var(--muted);
+  max-width: 78ch;
+}
+.kyc-banner-amber {
+  background: var(--amber-soft);
+  border-bottom-color: #f6dfae;
+  color: #92400e;
+}
+.kyc-banner-amber .btn-outline {
+  border-color: #e0bd76;
+}
+.kyc-banner-red {
+  background: var(--red-soft);
+  border-bottom-color: #f6c4d0;
+  color: #9f1239;
+}
+.kyc-banner-red p {
+  color: #9f1239;
+  opacity: 0.85;
+}
+
+@media (max-width: 720px) {
+  .kyc-banner {
+    padding: 12px;
+  }
+  .kyc-banner .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ============================================================
    Become a supplier — onboarding + KYC
    ============================================================ */
 .apply-hero {
@@ -302,6 +350,19 @@
   margin-bottom: 18px;
   background: var(--teal-soft);
   border-color: rgba(255, 183, 77, 0.45);
+}
+/* The payout block inside the KYC step: it is a different kind of question
+   from the identity fields above it, so it gets its own panel. */
+.op-fieldset {
+  margin-top: 4px;
+  padding: 16px 16px 4px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--teal);
+  border-radius: 14px;
+  background: var(--bg);
+}
+.op-fieldset > .h-card:first-child {
+  margin: 0 0 6px;
 }
 .doc-slot {
   display: flex;

@@ -100,7 +100,27 @@ let cacheLoaded = false;
 let cacheLoading = false;
 let cacheError: string | null = null;
 
+/**
+ * Rebuilt once per emit rather than inside the getter: useSyncExternalStore
+ * compares snapshots with Object.is, so a getter that allocated a fresh object
+ * would report a change on every render and spin forever.
+ */
+interface AccountCacheStatus {
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+}
+let cacheStatus: AccountCacheStatus = { loading: false, loaded: false, error: null };
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 function emit(): void {
+  cacheStatus = { loading: cacheLoading, loaded: cacheLoaded, error: cacheError };
   for (const listener of listeners) listener();
 }
 
@@ -132,16 +152,14 @@ export interface AccountsState {
 
 /** The account list as a hook, loaded on first use and shared by all callers. */
 export function useAccounts(): AccountsState {
-  const snapshot = useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    () => ({ loading: cacheLoading, loaded: cacheLoaded, error: cacheError }),
-    () => ({ loading: cacheLoading, loaded: cacheLoaded, error: cacheError }),
-  );
-  return { accounts: cached, ...snapshot, refresh: () => refreshAccounts(true) };
+  const status = useSyncExternalStore(subscribe, () => cacheStatus, () => cacheStatus);
+  // `refresh` is a new function each render on purpose: it is a command, not
+  // store data, and callers put it in effects rather than compare it.
+  return { accounts: cached, ...status, refresh: refreshNow };
 }
+
+/** Stable identity so a page can use refresh in a dependency array. */
+const refreshNow = (): Promise<void> => refreshAccounts(true);
 
 /** Point one cached record at its updated self (after a role or status change). */
 function replaceCachedAccount(next: AccountRecord): void {

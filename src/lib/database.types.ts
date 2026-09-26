@@ -348,7 +348,9 @@ type SupplierApplicationInsert = {
   status?: KycStatus;
 };
 
-type SupplierApplicationUpdate = Partial<Omit<SupplierApplicationRow, "id" | "ref" | "submitted_at">>;
+// `submitted_at` is updatable on purpose: a corrected application has to move
+// back to the front of the admin queue, which is ordered by (status, submitted_at desc).
+type SupplierApplicationUpdate = Partial<Omit<SupplierApplicationRow, "id" | "ref">>;
 
 type CategoryInsert = {
   id?: string;

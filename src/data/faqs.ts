@@ -96,7 +96,7 @@ export const faqs: FaqItem[] = [
   {
     group: "selling",
     q: "How do I become a supplier on MedLink?",
-    a: "Click 'Become a supplier', complete the application, and submit your KYC documents — business registration certificate, tax clearance certificate and the director's identity document. Our team reviews and verifies you, usually within 2–3 working days.",
+    a: "Click 'Become a supplier', complete the application, upload your KYC documents - business registration certificate, tax clearance certificate and the director's identity document - and pick a password for your account. You are signed in immediately and can set up your store, products and prices while we review. Your storefront and listings go public as soon as we approve you, usually within 2-3 working days.",
   },
   {
     group: "selling",
@@ -111,7 +111,7 @@ export const faqs: FaqItem[] = [
   {
     group: "selling",
     q: "How long does supplier verification take?",
-    a: "Most applications are reviewed within 2–3 working days. You'll get a reference number after submitting, and you can check your application status anytime on the Become a Supplier page.",
+    a: "Most applications are reviewed within 2-3 working days. You choose a password on the last step, so you can sign in straight away - a banner on every page then shows whether your KYC is pending, approved or needs fixing. You never need a reference number.",
   },
   {
     group: "selling",

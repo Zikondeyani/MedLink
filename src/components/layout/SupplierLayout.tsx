@@ -9,17 +9,19 @@ import {
   Menu,
   Package,
   Settings,
+  ShieldCheck,
   Store,
   TrendingUp,
   Users,
   X,
-  Zap,
 } from "lucide-react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { getSupplierById, useCurrentSupplierId } from "../../lib/registry";
+import { getSupplierById, useCurrentSupplierId, useOwnApplication } from "../../lib/registry";
+import { useSupplierOrders } from "../../lib/customerData";
 import { useAuth } from "../../lib/auth";
 import { useNotifications } from "../../lib/notifications";
 import { SupplierAvatar } from "../marketplace/SupplierCard";
+import KycStatusBanner from "../supplier/KycStatusBanner";
 import Logo from "../ui/Logo";
 
 const navItems = [
@@ -30,16 +32,23 @@ const navItems = [
   { to: "/supplier/orders", label: "Orders", icon: ClipboardList },
   { to: "/supplier/customers", label: "Customers", icon: Users },
   { to: "/supplier/sales", label: "Sales", icon: TrendingUp },
+  { to: "/supplier/verification", label: "Verification", icon: ShieldCheck },
   { to: "/supplier/settings", label: "Store Settings", icon: Settings },
 ];
 
 export default function SupplierLayout() {
   const supplierId = useCurrentSupplierId();
   const supplier = supplierId ? getSupplierById(supplierId) : undefined;
-  const { signOut } = useAuth();
+  const application = useOwnApplication();
+  const orders = useSupplierOrders();
+  const { user, signOut } = useAuth();
   const { unread } = useNotifications();
   const [drawer, setDrawer] = useState(false);
   const navigate = useNavigate();
+
+  // Orders still waiting on the supplier to act — the same number the Orders
+  // page shows, never a placeholder.
+  const openOrders = orders.filter((o) => o.status === "new" || o.status === "confirmed").length;
 
   const signOutAndReturnHome = () => {
     signOut();
@@ -53,7 +62,29 @@ export default function SupplierLayout() {
     };
   }, [drawer]);
 
-  if (!supplier) return null;
+  // The sign-up trigger creates the store tenant, so this should not happen.
+  // A blank dashboard would be indistinguishable from a crash, so say so.
+  if (!supplier) {
+    return (
+      <div className="supplier-shell">
+        <div className="supplier-main">
+          <div className="supplier-content container">
+            <div className="empty">
+              <Store size={30} />
+              <h1 className="h-section">No store is linked to this account yet</h1>
+              <p className="muted" style={{ maxWidth: 520 }}>
+                Your supplier account is active, but its store has not been created yet. This usually clears in
+                a few seconds — reload the page. If it keeps happening, contact sellers@medlink.mw.
+              </p>
+              <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => window.location.reload()}>
+                Reload
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     `snav-link${isActive ? " active" : ""}`;
@@ -74,9 +105,17 @@ export default function SupplierLayout() {
         <SupplierAvatar supplier={supplier} size={42} />
         <div className="grow">
           <b className="small">{supplier.name}</b>
-          <span className="badge badge-green" style={{ marginTop: 2 }}>
-            <Zap size={11} /> Verified Supplier
-          </span>
+          {supplier.verified ? (
+            <span className="badge badge-green" style={{ marginTop: 2 }}>
+              <ShieldCheck size={11} /> Verified Supplier
+            </span>
+          ) : application?.status === "rejected" ? (
+            <span className="badge badge-red" style={{ marginTop: 2 }}>KYC not approved</span>
+          ) : (
+            <Link to="/supplier/verification" className="badge badge-amber" style={{ marginTop: 2 }}>
+              <ShieldCheck size={11} /> Verification pending
+            </Link>
+          )}
         </div>
       </div>
 
@@ -85,17 +124,22 @@ export default function SupplierLayout() {
           <NavLink key={item.to} to={item.to} end={item.end} className={linkClass} onClick={() => setDrawer(false)}>
             <item.icon size={18} strokeWidth={1.9} />
             {item.label}
-            {item.label === "Orders" && (
-              <span className="snav-count">12</span>
-            )}
+            {item.label === "Orders" && openOrders > 0 && <span className="snav-count">{openOrders}</span>}
           </NavLink>
         ))}
       </nav>
 
       <div className="snav-foot">
-        <Link to={`/suppliers/${supplier.slug}`} className="snav-link" onClick={() => setDrawer(false)}>
-          <ExternalLink size={15} /> View storefront
-        </Link>
+        {/* A storefront only exists in public once the KYC is approved. */}
+        {supplier.verified ? (
+          <Link to={`/suppliers/${supplier.slug}`} className="snav-link" onClick={() => setDrawer(false)}>
+            <ExternalLink size={15} /> View storefront
+          </Link>
+        ) : (
+          <Link to="/supplier/verification" className="snav-link" onClick={() => setDrawer(false)}>
+            <ShieldCheck size={15} /> Publish my store
+          </Link>
+        )}
         <Link to="/" className="snav-link" onClick={() => setDrawer(false)}>
           <Store size={15} /> Back to marketplace
         </Link>
@@ -114,7 +158,7 @@ export default function SupplierLayout() {
             <Menu size={20} />
           </button>
           <div className="grow">
-            <span className="xs muted">Hello, Manager 👋</span>
+            <span className="xs muted">Hello, {user?.name?.split(" ")[0] ?? "there"} 👋</span>
             <h2 className="small">{supplier.name}</h2>
           </div>
           <div className="supplier-topbar-actions">
@@ -130,6 +174,8 @@ export default function SupplierLayout() {
             </Link>
           </div>
         </header>
+
+        <KycStatusBanner />
 
         <main className="supplier-content container">
           <Outlet />

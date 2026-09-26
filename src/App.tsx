@@ -43,6 +43,7 @@ import SupplierInventoryPage from "./pages/supplier/SupplierInventoryPage";
 import SupplierSalesPage from "./pages/supplier/SupplierSalesPage";
 import SupplierCustomersPage from "./pages/supplier/SupplierCustomersPage";
 import SupplierSettingsPage from "./pages/supplier/SupplierSettingsPage";
+import SupplierVerificationPage from "./pages/supplier/SupplierVerificationPage";
 import NotificationsPage from "./pages/NotificationsPage";
 
 function NotFound() {
@@ -114,6 +115,7 @@ export default function App() {
         <Route path="customers" element={<SupplierCustomersPage />} />
         <Route path="sales" element={<SupplierSalesPage />} />
         <Route path="settings" element={<SupplierSettingsPage />} />
+        <Route path="verification" element={<SupplierVerificationPage />} />
         <Route path="notifications" element={<NotificationsPage />} />
       </Route>
       </Routes>

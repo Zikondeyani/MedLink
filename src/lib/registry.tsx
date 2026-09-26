@@ -103,7 +103,37 @@ function subscribe(listener: Listener): () => void {
   };
 }
 
+/**
+ * Snapshots that are maps or objects are built here, once per emit, instead of
+ * inside the getter. useSyncExternalStore compares snapshots with Object.is,
+ * so a getter that allocated a fresh object would report "changed" on every
+ * render and spin forever. Between emits these references stay identical.
+ */
+let orderStatuses: OrderStatusMap = {};
+let productFlags: ProductFlags = {};
+let customerFlags: CustomerFlags = {};
+let dataStatus: DataStatus = { loading: false, loaded: false, error: null, lastSynced: null };
+
+function buildSnapshots(): void {
+  const statuses: OrderStatusMap = {};
+  for (const order of getAllOrders()) statuses[order.id] = order.status;
+
+  const flags: ProductFlags = {};
+  for (const product of products) {
+    flags[product.id] = { featured: product.popular, hidden: product.hidden };
+  }
+
+  const blocked: CustomerFlags = {};
+  for (const [id, isBlocked] of Object.entries(blockedAccounts)) blocked[id] = { blocked: isBlocked };
+
+  orderStatuses = statuses;
+  productFlags = flags;
+  customerFlags = blocked;
+  dataStatus = { loading, loaded, error: loadError, lastSynced };
+}
+
 function emit(): void {
+  buildSnapshots();
   for (const listener of listeners) listener();
 }
 
@@ -122,6 +152,9 @@ function supplierNameMap(): Map<string, string> {
 /** The auth provider reports the active account here. */
 export function setActiveAccount(next: ActiveAccount | null): void {
   account = next;
+  // useCurrentSupplierId() reads `account` but subscribes to `loading`, so
+  // subscribers have to be told when the account itself changes.
+  emit();
 }
 
 /** Loading / error state, for pages that must wait for real data. */
@@ -133,7 +166,7 @@ export interface DataStatus {
 }
 
 export function useDataStatus(): DataStatus {
-  return useStore(() => ({ loading, loaded, error: loadError, lastSynced }));
+  return useStore(() => dataStatus);
 }
 
 /**
@@ -556,11 +589,7 @@ export type CustomerFlags = Record<string, { blocked?: boolean }>;
 
 /** Featured / hidden are real columns on the products table. */
 export function useProductFlags(): ProductFlags {
-  return useStore(() => {
-    const flags: ProductFlags = {};
-    for (const product of products) flags[product.id] = { featured: product.popular, hidden: product.hidden };
-    return flags;
-  });
+  return useStore(() => productFlags);
 }
 
 /** Administrator: put a product in or take it out of the featured shelf. */
@@ -593,11 +622,7 @@ export async function setProductHidden(id: string, hidden: boolean): Promise<{ o
 
 /** The order status is the canonical column — no overrides any more. */
 export function useOrderStatuses(): OrderStatusMap {
-  return useStore(() => {
-    const statuses: OrderStatusMap = {};
-    for (const order of getAllOrders()) statuses[order.id] = order.status;
-    return statuses;
-  });
+  return useStore(() => orderStatuses);
 }
 
 export async function setOrderStatus(
@@ -614,11 +639,7 @@ export function effectiveOrderStatus(order: Order): CustomerOrderStatus {
 }
 
 export function useCustomerFlags(): CustomerFlags {
-  return useStore(() => {
-    const flags: CustomerFlags = {};
-    for (const [id, blocked] of Object.entries(blockedAccounts)) flags[id] = { blocked };
-    return flags;
-  });
+  return useStore(() => customerFlags);
 }
 
 /** Administrator block flag — the server refuses blocked accounts at checkout. */
@@ -654,8 +675,9 @@ export function getApplicationByRef(ref: string): SupplierApplication | undefine
 }
 
 /**
- * Approve or reject an application. On approval the server also creates the
- * supplier store, attaches it to the applicant's account and grants the role.
+ * Approve or reject an application. The store already exists — the sign-up
+ * trigger created it — so approval only publishes it and attaches it to the
+ * applicant's account; rejection takes it back off the marketplace.
  */
 export async function reviewApplication(
   id: string,
@@ -665,11 +687,7 @@ export async function reviewApplication(
   const application = getApplicationById(id);
   if (!application) return { ok: false, error: "That application was not found." };
 
-  const result = await reviewSupplierApplicationOnBackend(
-    { ref: application.ref, businessName: application.businessName },
-    status,
-    note,
-  );
+  const result = await reviewSupplierApplicationOnBackend({ ref: application.ref }, status, note);
   if (result.status === "error") return { ok: false, error: result.error };
   if (result.status === "skipped") {
     return { ok: false, error: "That application is not on the server yet — it cannot be reviewed." };

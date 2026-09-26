@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router-dom";
+import KycStatusBanner from "../supplier/KycStatusBanner";
 import Navbar from "./Navbar";
 import Footer from "./Footer";
 import MobileNav from "./MobileNav";
@@ -17,6 +18,8 @@ export default function CustomerLayout() {
     <div className="customer-shell">
       <ScrollToTop />
       <Navbar />
+      {/* Renders nothing for customers and once a supplier is verified. */}
+      <KycStatusBanner />
       <main className="customer-main">
         <Outlet />
       </main>

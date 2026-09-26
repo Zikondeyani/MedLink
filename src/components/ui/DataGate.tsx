@@ -14,7 +14,17 @@ import { loadMarketplace, useDataStatus } from "../../lib/registry";
 export default function DataGate({ children }: { children: ReactNode }) {
   const { loading, loaded, error } = useDataStatus();
 
-  if (error && loaded) {
+  // Spinner first: it also covers the one render before the auth provider has
+  // kicked off its first load, so pages never flash an empty catalogue first.
+  // A retry is a `loading` run with a stale `error`, so that case shows the
+  // spinner too rather than bouncing back to the error card.
+  if (!loaded && (loading || !error)) {
+    return <Loading />;
+  }
+
+  // Reached on the very first load too, where `loaded` is still false: an
+  // unreachable database must not look like an empty marketplace.
+  if (error) {
     return (
       <div className="page container">
         <div className="card card-pad" style={{ textAlign: "center", padding: "48px 24px" }}>
@@ -29,16 +39,18 @@ export default function DataGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!loaded && loading) {
-    return (
-      <div className="page container" style={{ display: "grid", placeItems: "center", minHeight: "55vh" }}>
-        <div className="stack" style={{ alignItems: "center", gap: 10 }}>
-          <Loader2 size={26} className="spin muted" />
-          <p className="small muted">Loading the marketplace…</p>
-        </div>
-      </div>
-    );
-  }
+  if (!loaded) return <Loading />;
 
   return <>{children}</>;
+}
+
+function Loading() {
+  return (
+    <div className="page container" style={{ display: "grid", placeItems: "center", minHeight: "55vh" }}>
+      <div className="stack" style={{ alignItems: "center", gap: 10 }}>
+        <Loader2 size={26} className="spin muted" />
+        <p className="small muted">Loading the marketplace…</p>
+      </div>
+    </div>
+  );
 }

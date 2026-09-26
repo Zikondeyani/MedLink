@@ -42,7 +42,21 @@ let loaded = false;
 let loading = false;
 let loadError: string | null = null;
 
+/** Loading/error state of the order cache, for page-level guards. */
+export interface CustomerDataStatus {
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+}
+
+/**
+ * Rebuilt once per emit, never inside the getter: useSyncExternalStore compares
+ * snapshots with Object.is, so a fresh object per call would loop forever.
+ */
+let dataStatus: CustomerDataStatus = { loading: false, loaded: false, error: null };
+
 function emit(): void {
+  dataStatus = { loading, loaded, error: loadError };
   for (const listener of listeners) listener();
 }
 
@@ -123,12 +137,8 @@ export function useCustomerAddresses(customerEmail: string): SavedAddress[] {
 }
 
 /** Loading/error state of the order cache, for page-level guards. */
-export function useCustomerDataStatus(): { loading: boolean; loaded: boolean; error: string | null } {
-  return useSyncExternalStore(
-    subscribe,
-    () => ({ loading, loaded, error: loadError }),
-    () => ({ loading, loaded, error: loadError }),
-  );
+export function useCustomerDataStatus(): CustomerDataStatus {
+  return useSyncExternalStore(subscribe, () => dataStatus, () => dataStatus);
 }
 
 export function getAllOrders(): Order[] {
