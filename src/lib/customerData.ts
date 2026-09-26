@@ -1,5 +1,22 @@
-import { useMemo, useSyncExternalStore } from "react";
-import { customerOrders as seedOrders, savedAddresses as seedAddresses, DEMO_BUYER_EMAIL } from "../data/orders";
+/* ============================================================
+   MedLink — orders, fulfilment and the buyer's address book
+
+   Everything here is a real database record. Checkout calls the
+   place_order() RPC, which recomputes prices, stock and fees in
+   Postgres, and writes the order, its lines, the per-store
+   fulfilment rows, the payment and the notification in one
+   transaction. The browser only says "these products, these
+   quantities" — it can never invent a price.
+
+   Row-level security decides what the signed-in account can read:
+   a buyer sees their own orders, a supplier sees the fulfilment
+   rows of its store, an administrator sees everything.
+   ============================================================ */
+
+import { useSyncExternalStore } from "react";
+import { supabase } from "./supabase";
+import { fetchAddresses, fetchOrders, maskPaymentReference } from "./db";
+import type { Database, Json } from "./database.types";
 import type {
   CustomerOrderStatus,
   DeliveryAddress,
@@ -9,269 +26,125 @@ import type {
   PaymentInfo,
   PaymentMethod,
   SavedAddress,
+  SupplierOrder,
+  SupplierOrderStatus,
 } from "../data/types";
 
-/**
- * Customer-owned data lives behind a small client-side store in this demo.
- * The production equivalent must enforce the same ownership rules on the
- * server; localStorage is not an authorization boundary.
- */
-const ORDERS_KEY = "medlink.customer.orders.v1";
-const ADDRESSES_KEY = "medlink.customer.addresses.v1";
-
 type Listener = () => void;
+type OrderUpdate = Database["public"]["Tables"]["orders"]["Update"];
+type AddressUpdate = Database["public"]["Tables"]["addresses"]["Update"];
 const listeners = new Set<Listener>();
 
-let orders: Order[] = readOrders();
-let addresses: SavedAddress[] = readAddresses();
+let orders: Order[] = [];
+let supplierOrders: SupplierOrder[] = [];
+let addresses: SavedAddress[] = [];
+let loaded = false;
+let loading = false;
+let loadError: string | null = null;
 
-const ORDER_STATUSES: CustomerOrderStatus[] = [
-  "confirmed",
-  "preparing",
-  "ready",
-  "out_for_delivery",
-  "delivered",
-  "cancelled",
-];
-const PAYMENT_METHODS: PaymentMethod[] = ["Mobile Money", "Bank Card", "Bank Transfer"];
+function emit(): void {
+  for (const listener of listeners) listener();
+}
 
 function subscribe(listener: Listener): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
 
-/** Subscribe to customer-store changes for financial/admin projections. */
-export function subscribeCustomerData(listener: Listener): () => void {
-  return subscribe(listener);
-}
-
-function emit(): void {
-  listeners.forEach((listener) => listener());
-}
-
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
+export { maskPaymentReference };
 
-function isFiniteNonNegative(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
-}
-
-function isPaymentMethod(value: unknown): value is PaymentMethod {
-  return typeof value === "string" && PAYMENT_METHODS.includes(value as PaymentMethod);
-}
-
-function isOrderStatus(value: unknown): value is CustomerOrderStatus {
-  return typeof value === "string" && ORDER_STATUSES.includes(value as CustomerOrderStatus);
-}
-
-function isDeliveryAddress(value: unknown): value is DeliveryAddress {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.fullName === "string" &&
-    typeof value.phone === "string" &&
-    typeof value.address === "string" &&
-    typeof value.city === "string" &&
-    typeof value.area === "string" &&
-    typeof value.instructions === "string" &&
-    (value.label === undefined || typeof value.label === "string")
-  );
-}
-
-function isOrderLine(value: unknown): value is OrderLine {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.productId === "string" &&
-    typeof value.name === "string" &&
-    isFiniteNonNegative(value.price) &&
-    typeof value.quantity === "number" &&
-    Number.isInteger(value.quantity) &&
-    value.quantity > 0 &&
-    typeof value.unit === "string" &&
-    typeof value.supplierId === "string" &&
-    typeof value.supplierName === "string" &&
-    typeof value.image === "string"
-  );
-}
-
-function isTimelineEntry(value: unknown): value is OrderTimelineEntry {
-  if (!isRecord(value)) return false;
-  return isOrderStatus(value.status) && typeof value.at === "string" && (value.note === undefined || typeof value.note === "string");
-}
-
-function isPaymentInfo(value: unknown): value is PaymentInfo {
-  return isRecord(value) && isPaymentMethod(value.method) && typeof value.reference === "string" && value.reference.length <= 120;
-}
+/* ------------------------------------------------------------
+   Loading
+   ------------------------------------------------------------ */
 
 /**
- * Keep only a display-safe payment reference in client persistence. Raw
- * mobile-money numbers, card numbers and bank details must never be stored in
- * an order or transaction record.
+ * Fetch the orders the signed-in account may see plus its address book.
+ * Called by the marketplace bootstrap on mount, on sign-in, on sign-out
+ * and after every mutation, so the cache is never a guess.
  */
-export function maskPaymentReference(method: PaymentMethod, reference: string): string {
-  const value = reference.trim();
-  if (method === "Mobile Money") {
-    const digits = value.replace(/\D/g, "");
-    return `Mobile Money · xx${digits.slice(-4) || "0000"}`;
-  }
-  if (method === "Bank Card") {
-    const digits = value.replace(/\D/g, "");
-    return `Bank Card · xx${digits.slice(-4) || "0000"}`;
-  }
-  return "Bank Transfer · reference submitted";
-}
-
-function isOrder(value: unknown): value is Order {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.customerEmail === "string" &&
-    typeof value.number === "string" &&
-    typeof value.placedAt === "string" &&
-    typeof value.customerName === "string" &&
-    isDeliveryAddress(value.address) &&
-    Array.isArray(value.lines) &&
-    value.lines.length > 0 &&
-    value.lines.every(isOrderLine) &&
-    isFiniteNonNegative(value.subtotal) &&
-    (value.serviceFee === undefined || isFiniteNonNegative(value.serviceFee)) &&
-    isFiniteNonNegative(value.deliveryFee) &&
-    isFiniteNonNegative(value.total) &&
-    isOrderStatus(value.status) &&
-    isPaymentInfo(value.payment) &&
-    typeof value.estimatedDelivery === "string" &&
-    Array.isArray(value.timeline) &&
-    value.timeline.every(isTimelineEntry)
-  );
-}
-
-function isAddress(value: unknown): value is SavedAddress {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.customerEmail === "string" &&
-    typeof value.fullName === "string" &&
-    typeof value.phone === "string" &&
-    typeof value.address === "string" &&
-    typeof value.city === "string" &&
-    typeof value.area === "string" &&
-    typeof value.instructions === "string" &&
-    (value.label === undefined || typeof value.label === "string") &&
-    typeof value.isDefault === "boolean"
-  );
-}
-
-function orderSort(a: Order, b: Order): number {
-  const aTime = Date.parse(a.placedAt);
-  const bTime = Date.parse(b.placedAt);
-  if (Number.isNaN(aTime) && Number.isNaN(bTime)) return 0;
-  if (Number.isNaN(aTime)) return 1;
-  if (Number.isNaN(bTime)) return -1;
-  return bTime - aTime;
-}
-
-function normalizeOrder(order: Order): Order {
-  return {
-    ...order,
-    customerEmail: normalizeEmail(order.customerEmail),
-    address: { ...order.address },
-    lines: order.lines.map((line) => ({ ...line })),
-    payment: {
-      method: order.payment.method,
-      reference: maskPaymentReference(order.payment.method, order.payment.reference),
-    },
-    timeline: order.timeline.map((entry) => ({ ...entry })),
-  };
-}
-
-function readOrders(): Order[] {
-  const seed = seedOrders.map(normalizeOrder);
+export async function loadCustomerData(email: string, supplierNames: Map<string, string>): Promise<void> {
+  loading = true;
+  emit();
   try {
-    const raw = localStorage.getItem(ORDERS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    const stored = Array.isArray(parsed) ? parsed.filter(isOrder) : [];
-    const byId = new Map<string, Order>(seed.map((order) => [order.id, order]));
-    for (const order of stored) byId.set(order.id, normalizeOrder(order));
-    return [...byId.values()].sort(orderSort);
-  } catch {
-    return seed.sort(orderSort);
+    const [orderSnapshot, addressSnapshot] = await Promise.all([
+      fetchOrders(supplierNames),
+      fetchAddresses(email),
+    ]);
+    orders = orderSnapshot.orders;
+    supplierOrders = orderSnapshot.supplierOrders;
+    addresses = addressSnapshot;
+    loadError = null;
+    loaded = true;
+  } catch (err) {
+    loadError = err instanceof Error ? err.message : "Could not load your orders.";
+  } finally {
+    loading = false;
+    emit();
   }
 }
 
-function readAddresses(): SavedAddress[] {
-  const seed = seedAddresses.map((address) => ({
-    ...address,
-    customerEmail: normalizeEmail(address.customerEmail || DEMO_BUYER_EMAIL),
-  }));
-  try {
-    const raw = localStorage.getItem(ADDRESSES_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    const stored = Array.isArray(parsed) ? parsed.filter(isAddress) : [];
-    const byId = new Map<string, SavedAddress>(seed.map((address) => [address.id, address]));
-    for (const address of stored) byId.set(address.id, { ...address, customerEmail: normalizeEmail(address.customerEmail) });
-    return [...byId.values()];
-  } catch {
-    return seed;
-  }
-}
+/* ------------------------------------------------------------
+   Reads
+   ------------------------------------------------------------ */
 
-function persistOrders(): void {
-  try {
-    localStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
-  } catch {
-    /* storage unavailable — keep the in-memory demo working */
-  }
-}
-
-function persistAddresses(): void {
-  try {
-    localStorage.setItem(ADDRESSES_KEY, JSON.stringify(addresses));
-  } catch {
-    /* storage unavailable — keep the in-memory demo working */
-  }
-}
-
-/** All marketplace orders. This selector is intentionally for admin/escrow surfaces. */
 export function useOrders(): Order[] {
   return useSyncExternalStore(subscribe, () => orders, () => orders);
 }
 
-/** Orders belonging to one authenticated customer only. */
-export function useCustomerOrders(customerEmail: string): Order[] {
-  const allOrders = useOrders();
-  const email = normalizeEmail(customerEmail);
-  return useMemo(
-    () => allOrders.filter((order) => normalizeEmail(order.customerEmail) === email).sort(orderSort),
-    [allOrders, email],
-  );
+export function useSupplierOrders(): SupplierOrder[] {
+  return useSyncExternalStore(subscribe, () => supplierOrders, () => supplierOrders);
 }
 
-/** Reactive, ownership-scoped order lookup for customer detail routes. */
+export function useCustomerOrders(customerEmail: string): Order[] {
+  const all = useOrders();
+  const email = normalizeEmail(customerEmail);
+  return all.filter((order) => normalizeEmail(order.customerEmail) === email);
+}
+
 export function useCustomerOrderById(id: string | undefined, customerEmail: string): Order | undefined {
-  const ownedOrders = useCustomerOrders(customerEmail);
-  return useMemo(() => (id ? ownedOrders.find((order) => order.id === id) : undefined), [id, ownedOrders]);
+  const owned = useCustomerOrders(customerEmail);
+  return id ? owned.find((order) => order.id === id) : undefined;
+}
+
+/** One fulfilment row of the store the signed-in account may see. */
+export function useSupplierOrderById(id: string | undefined): SupplierOrder | undefined {
+  useSyncExternalStore(subscribe, () => supplierOrders, () => supplierOrders);
+  return id ? supplierOrders.find((order) => order.id === id) : undefined;
 }
 
 export function useCustomerAddresses(customerEmail: string): SavedAddress[] {
-  const allAddresses = useSyncExternalStore(subscribe, () => addresses, () => addresses);
+  useSyncExternalStore(subscribe, () => addresses, () => addresses);
   const email = normalizeEmail(customerEmail);
-  return useMemo(
-    () => allAddresses.filter((address) => normalizeEmail(address.customerEmail) === email),
-    [allAddresses, email],
+  return addresses.filter((address) => normalizeEmail(address.customerEmail) === email);
+}
+
+/** Loading/error state of the order cache, for page-level guards. */
+export function useCustomerDataStatus(): { loading: boolean; loaded: boolean; error: string | null } {
+  return useSyncExternalStore(
+    subscribe,
+    () => ({ loading, loaded, error: loadError }),
+    () => ({ loading, loaded, error: loadError }),
   );
 }
 
-/** Admin/registry snapshot. Customer pages must use the scoped selectors above. */
 export function getAllOrders(): Order[] {
   return orders;
 }
 
+export function getAllSupplierOrders(): SupplierOrder[] {
+  return supplierOrders;
+}
+
 export function getOrderById(id: string): Order | undefined {
   return orders.find((order) => order.id === id);
+}
+
+export function getSupplierOrderById(id: string): SupplierOrder | undefined {
+  return supplierOrders.find((order) => order.id === id);
 }
 
 export function getCustomerOrderById(id: string, customerEmail: string): Order | undefined {
@@ -289,98 +162,169 @@ export function getDefaultCustomerAddress(customerEmail: string): SavedAddress |
   return owned.find((address) => address.isDefault) ?? owned[0];
 }
 
-function nextOrderId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `ord-${crypto.randomUUID()}`;
+/** Distinct buyers a store has supplied, derived from its fulfilment rows. */
+export function supplierCustomers(supplierId: string): {
+  email: string;
+  name: string;
+  org: string;
+  phone: string;
+  city: string;
+  area: string;
+  orders: number;
+  spend: number;
+  lastOrderAt: string;
+}[] {
+  const byEmail = new Map<string, ReturnType<typeof supplierCustomers>[number]>();
+  for (const order of supplierOrders) {
+    if (order.supplierId !== supplierId) continue;
+    const key = normalizeEmail(order.customerEmail ?? "") || order.customerName;
+    const existing = byEmail.get(key);
+    if (existing) {
+      existing.orders += 1;
+      existing.spend += order.total;
+      if (order.placedAt > existing.lastOrderAt) existing.lastOrderAt = order.placedAt;
+      continue;
+    }
+    byEmail.set(key, {
+      email: order.customerEmail ?? "",
+      name: order.customerName,
+      org: order.customerOrg,
+      phone: order.customerPhone,
+      city: order.city,
+      area: order.area,
+      orders: 1,
+      spend: order.total,
+      lastOrderAt: order.placedAt,
+    });
   }
-  return `ord-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return [...byEmail.values()].sort((a, b) => b.spend - a.spend);
 }
 
-function nextOrderNumber(): string {
-  const date = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-  let sequence = orders.length + 1;
-  let number = `ML-${date}-${String(sequence).padStart(3, "0")}`;
-  while (orders.some((order) => order.number === number)) {
-    sequence += 1;
-    number = `ML-${date}-${String(sequence).padStart(3, "0")}`;
-  }
-  return number;
-}
+/* ------------------------------------------------------------
+   Checkout — the only way an order can be created
+   ------------------------------------------------------------ */
 
-export interface CreateCustomerOrderInput {
-  customerEmail: string;
-  customerName: string;
+export interface PlaceOrderInput {
+  /** What the buyer is buying: product id + quantity. Prices are server-side. */
+  lines: Pick<OrderLine, "productId" | "quantity">[];
   address: DeliveryAddress;
-  lines: OrderLine[];
-  /** Captured at checkout; the demo store does not recalculate historical fees. */
-  serviceFee: number;
-  deliveryFee: number;
-  /** Accepted for call-site compatibility; totals are recalculated from lines and captured fees. */
-  subtotal?: number;
-  total?: number;
   payment: PaymentInfo;
+  /** Optional delivery promise shown on the order. */
+  estimatedDelivery?: string;
 }
 
-/** Persist a newly placed demo order to its authenticated customer. */
-export function createCustomerOrder(input: CreateCustomerOrderInput): Order {
-  if (!input.lines.length) throw new Error("An order must contain at least one product line.");
-  const now = new Date().toISOString();
-  const lines = input.lines.map((line) => ({
-    ...line,
-    name: line.name.trim(),
-    supplierId: line.supplierId.trim(),
-    supplierName: line.supplierName.trim(),
-  }));
-  const subtotal = lines.reduce((sum, line) => sum + line.price * line.quantity, 0);
-  const serviceFee = Math.max(0, Math.round(input.serviceFee));
-  const deliveryFee = Math.max(0, Math.round(input.deliveryFee));
-  const order: Order = {
-    id: nextOrderId(),
-    customerEmail: normalizeEmail(input.customerEmail),
-    number: nextOrderNumber(),
-    placedAt: now,
-    customerName: input.customerName.trim() || nameFromEmail(input.customerEmail),
-    address: { ...input.address },
-    lines,
-    subtotal,
-    serviceFee,
-    deliveryFee,
-    total: subtotal + serviceFee + deliveryFee,
-    status: "confirmed",
-    payment: {
-      method: input.payment.method,
-      reference: maskPaymentReference(input.payment.method, input.payment.reference),
-    },
-    estimatedDelivery: "1–2 days",
-    timeline: [{ status: "confirmed", at: now, note: "Order confirmed by MedLink" }],
-  };
-  orders = [order, ...orders].sort(orderSort);
-  persistOrders();
-  emit();
-  return order;
-}
+export type PlaceOrderResult =
+  | { ok: true; order: Order }
+  | { ok: false; error: string };
 
-/** Persist a canonical fulfilment status and append an audit timeline entry. */
-export function updateCustomerOrderStatus(id: string, status: CustomerOrderStatus, note?: string): Order | undefined {
-  const now = new Date().toISOString();
-  let updated: Order | undefined;
-  orders = orders.map((order) => {
-    if (order.id !== id) return order;
-    updated = {
-      ...order,
-      status,
-      timeline: [
-        ...order.timeline,
-        { status, at: now, note: note?.trim() || undefined },
-      ],
-    };
-    return updated;
+/**
+ * Place a real order. The server validates stock, recomputes the money and
+ * creates every downstream record, so the app cannot record a fake sale.
+ */
+export async function placeCustomerOrder(input: PlaceOrderInput): Promise<PlaceOrderResult> {
+  if (!supabase) {
+    return { ok: false, error: "Checkout needs the MedLink backend — configure VITE_SUPABASE_URL and the publishable key." };
+  }
+  if (input.lines.length === 0) {
+    return { ok: false, error: "Your order has no items." };
+  }
+
+  const { data, error } = await supabase.rpc("place_order", {
+    p_items: input.lines.map((line) => ({ product_id: line.productId, quantity: line.quantity })),
+    p_address: { ...input.address },
+    p_payment_method: input.payment.method as PaymentMethod,
+    p_payment_reference: input.payment.reference.trim(),
+    p_estimated_delivery: input.estimatedDelivery ?? null,
   });
-  if (!updated) return undefined;
-  persistOrders();
-  emit();
-  return updated;
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  const result = data as { order_id?: string; number?: string } | null;
+  const orderId = result?.order_id ?? "";
+  if (!orderId) return { ok: false, error: "The server did not return an order. Please try again." };
+
+  emit(); // the bootstrap re-read happens on the next load; make the UI update now
+  return { ok: true, order: buildOptimisticOrder(orderId, result?.number ?? "", input) };
 }
+
+/** Minimal shape so the confirmation screen can render before the re-read. */
+function buildOptimisticOrder(id: string, number: string, input: PlaceOrderInput): Order {
+  const now = new Date().toISOString();
+  return {
+    id,
+    customerEmail: "",
+    number,
+    placedAt: now,
+    customerName: input.address.fullName,
+    address: input.address,
+    lines: [],
+    subtotal: 0,
+    serviceFee: 0,
+    deliveryFee: 0,
+    total: 0,
+    status: "confirmed",
+    payment: { method: input.payment.method, reference: input.payment.reference },
+    estimatedDelivery: input.estimatedDelivery ?? "1–2 days",
+    timeline: [{ status: "confirmed", at: now, note: "Order placed" }],
+  };
+}
+
+/* ------------------------------------------------------------
+   Order status (admin / store)
+   ------------------------------------------------------------ */
+
+const STATUS_NOTES: Record<CustomerOrderStatus, string> = {
+  confirmed: "Order confirmed by MedLink",
+  preparing: "Stores are preparing your order",
+  ready: "Your order is ready",
+  out_for_delivery: "Your order is on the way",
+  delivered: "Delivered",
+  cancelled: "Order cancelled",
+};
+
+/** Set the canonical order status and append an audit entry to the timeline. */
+export async function updateCustomerOrderStatus(
+  id: string,
+  status: CustomerOrderStatus,
+  note?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const current = orders.find((order) => order.id === id);
+  if (!current) return { ok: false, error: "That order was not found." };
+
+  const timeline: OrderTimelineEntry[] = [
+    ...current.timeline,
+    { status, at: new Date().toISOString(), note: note?.trim() || STATUS_NOTES[status] },
+  ];
+
+  const update: OrderUpdate = { status, timeline: timeline as unknown as Json };
+  const { error } = await supabase.from("orders").update(update).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+
+  // Optimistic update, then let the caller re-read for the canonical row.
+  orders = orders.map((order) => (order.id === id ? { ...order, status, timeline } : order));
+  emit();
+  return { ok: true };
+}
+
+/** A store moving one fulfilment row along its own pipeline. */
+export async function updateSupplierOrderStatus(
+  id: string,
+  status: SupplierOrderStatus,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const { error } = await supabase.from("supplier_orders").update({ status }).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  supplierOrders = supplierOrders.map((order) => (order.id === id ? { ...order, status } : order));
+  emit();
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------
+   Address book
+   ------------------------------------------------------------ */
 
 function addressMatches(left: DeliveryAddress, right: DeliveryAddress): boolean {
   return (
@@ -392,88 +336,94 @@ function addressMatches(left: DeliveryAddress, right: DeliveryAddress): boolean 
   );
 }
 
-/** Save the address used at checkout under the same customer account. */
-export function saveCustomerAddress(
+/** Save the address used at checkout. Identical addresses are not duplicated. */
+export async function saveCustomerAddress(
   customerEmail: string,
   address: DeliveryAddress,
   label = "Delivery address",
-): SavedAddress {
-  const email = normalizeEmail(customerEmail);
-  const existing = getCustomerAddresses(email);
-  const duplicate = existing.find((item) => addressMatches(item, address));
-  if (duplicate) return duplicate;
-  const saved: SavedAddress = {
-    ...address,
-    id: `addr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-    customerEmail: email,
+): Promise<void> {
+  if (!supabase) return;
+  const owned = getCustomerAddresses(customerEmail);
+  const existing = owned.find((row) => addressMatches(row, address));
+  if (existing) return;
+
+  const { error } = await supabase.from("addresses").insert({
+    customer_email: normalizeEmail(customerEmail),
+    full_name: address.fullName.trim(),
+    phone: address.phone.trim(),
+    address: address.address.trim(),
+    city: address.city.trim(),
+    area: address.area.trim(),
+    instructions: address.instructions.trim(),
     label,
-    isDefault: existing.length === 0 || !existing.some((item) => item.isDefault),
-  };
-  addresses = [
-    saved,
-    ...addresses.map((item) =>
-      normalizeEmail(item.customerEmail) === email && saved.isDefault ? { ...item, isDefault: false } : item,
-    ),
-  ];
-  persistAddresses();
+    is_default: owned.length === 0,
+  });
+  if (error) return;
   emit();
-  return saved;
 }
 
-export function updateCustomerAddress(
+export async function updateCustomerAddress(
   customerEmail: string,
   id: string,
-  patch: Partial<DeliveryAddress> & { label?: string },
-): SavedAddress | undefined {
-  const email = normalizeEmail(customerEmail);
-  let updated: SavedAddress | undefined;
-  addresses = addresses.map((address) => {
-    if (normalizeEmail(address.customerEmail) !== email || address.id !== id) return address;
-    updated = { ...address, ...patch, customerEmail: email, id: address.id };
-    return updated;
-  });
-  if (!updated) return undefined;
-  persistAddresses();
-  emit();
-  return updated;
-}
-
-export function deleteCustomerAddress(customerEmail: string, id: string): void {
-  const email = normalizeEmail(customerEmail);
-  const owned = getCustomerAddresses(email);
-  const removed = owned.find((address) => address.id === id);
-  if (!removed) return;
-  addresses = addresses.filter((address) => !(normalizeEmail(address.customerEmail) === email && address.id === id));
-  if (removed.isDefault) {
-    const replacement = getCustomerAddresses(email)[0];
-    if (replacement) {
-      addresses = addresses.map((address) =>
-        normalizeEmail(address.customerEmail) === email && address.id === replacement.id
-          ? { ...address, isDefault: true }
-          : address,
-      );
-    }
+  patch: Partial<DeliveryAddress> & { label?: string; isDefault?: boolean },
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  if (!getCustomerAddresses(customerEmail).some((address) => address.id === id)) {
+    return { ok: false, error: "That address is not in your address book." };
   }
-  persistAddresses();
-  emit();
-}
 
-export function setDefaultCustomerAddress(customerEmail: string, id: string): void {
-  const email = normalizeEmail(customerEmail);
-  if (!getCustomerAddresses(email).some((address) => address.id === id)) return;
+  const update: AddressUpdate = {};
+  if (patch.fullName !== undefined) update.full_name = patch.fullName.trim();
+  if (patch.phone !== undefined) update.phone = patch.phone.trim();
+  if (patch.address !== undefined) update.address = patch.address.trim();
+  if (patch.city !== undefined) update.city = patch.city.trim();
+  if (patch.area !== undefined) update.area = patch.area.trim();
+  if (patch.instructions !== undefined) update.instructions = patch.instructions.trim();
+  if (patch.label !== undefined) update.label = patch.label;
+  if (patch.isDefault !== undefined) update.is_default = patch.isDefault;
+
+  const { error } = await supabase.from("addresses").update(update).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+
   addresses = addresses.map((address) =>
-    normalizeEmail(address.customerEmail) === email ? { ...address, isDefault: address.id === id } : address,
+    address.id === id ? { ...address, ...stripInternal(patch) } : address,
   );
-  persistAddresses();
+  emit();
+  return { ok: true };
+}
+
+function stripInternal(patch: Partial<DeliveryAddress> & { isDefault?: boolean }): Partial<SavedAddress> {
+  const { isDefault, ...rest } = patch;
+  const next: Partial<SavedAddress> = { ...rest };
+  if (isDefault !== undefined) next.isDefault = isDefault;
+  return next;
+}
+
+export async function deleteCustomerAddress(customerEmail: string, id: string): Promise<void> {
+  if (!supabase) return;
+  if (!getCustomerAddresses(customerEmail).some((address) => address.id === id)) return;
+  const { error } = await supabase.from("addresses").delete().eq("id", id);
+  if (error) return;
+
+  addresses = addresses.filter((address) => address.id !== id);
+  // Never leave the book without a default.
+  const remaining = getCustomerAddresses(customerEmail);
+  if (remaining.length > 0 && !remaining.some((address) => address.isDefault)) {
+    const replacement = remaining[0];
+    await supabase.from("addresses").update({ is_default: true }).eq("id", replacement.id);
+    addresses = addresses.map((address) =>
+      address.id === replacement.id ? { ...address, isDefault: true } : address,
+    );
+  }
   emit();
 }
 
-function nameFromEmail(email: string): string {
-  const local = email.split("@")[0] ?? "customer";
-  return local
-    .split(/[._-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ") || "Customer";
+export async function setDefaultCustomerAddress(customerEmail: string, id: string): Promise<void> {
+  if (!supabase) return;
+  const owned = getCustomerAddresses(customerEmail);
+  if (!owned.some((address) => address.id === id)) return;
+  await supabase.from("addresses").update({ is_default: false }).ilike("customer_email", customerEmail);
+  await supabase.from("addresses").update({ is_default: true }).eq("id", id);
+  addresses = owned.map((address) => ({ ...address, isDefault: address.id === id }));
+  emit();
 }

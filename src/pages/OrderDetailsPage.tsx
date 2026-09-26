@@ -1,7 +1,8 @@
 import { ArrowLeft, CalendarClock, MapPin, Package, RotateCcw, Truck, Wallet } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
-import { customerOrderById } from "../data/orders";
-import { supplierById } from "../data/suppliers";
+import { useCustomerOrderById } from "../lib/customerData";
+import { useAuth } from "../lib/auth";
+import { getSupplierById } from "../lib/registry";
 import { prettyDate, mwk } from "../lib/format";
 import { useCart } from "../lib/cart";
 import { useToast } from "../lib/toast";
@@ -11,7 +12,8 @@ import EmptyState from "../components/ui/EmptyState";
 
 export default function OrderDetailsPage() {
   const { id } = useParams<{ id: string }>();
-  const order = customerOrderById(id ?? "");
+  const { user } = useAuth();
+  const order = useCustomerOrderById(id, user?.email ?? "");
   const { add } = useCart();
   const { push } = useToast();
 
@@ -28,7 +30,7 @@ export default function OrderDetailsPage() {
     );
   }
 
-  const suppliers = [...new Set(order.lines.map((l) => l.supplierId))].map((sid) => supplierById(sid)).filter(Boolean);
+  const suppliers = [...new Set(order.lines.map((l) => l.supplierId))].map((sid) => getSupplierById(sid)).filter(Boolean);
 
   const reorder = () => {
     order.lines.forEach((l) => add(l.productId, l.quantity));

@@ -823,6 +823,16 @@ strong {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+/* No rows in the database — say so instead of showing a blank grid. */
+.table tbody td.table-empty {
+  padding: 34px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.table tbody tr:hover td.table-empty {
+  background: transparent;
+}
 
 /* ---------- Divider ---------- */
 .divider {

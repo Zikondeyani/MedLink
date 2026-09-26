@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { Check, ChevronRight, PackageCheck, Truck } from "lucide-react";
 import { Link } from "react-router-dom";
-import { supplierOrders } from "../../data/orders";
+import { updateSupplierOrderStatus, useSupplierOrders } from "../../lib/customerData";
+import { useCurrentSupplierId } from "../../lib/registry";
 import type { SupplierOrder, SupplierOrderStatus } from "../../data/types";
 import { mwk, shortDate } from "../../lib/format";
 import { useToast } from "../../lib/toast";
@@ -13,8 +14,12 @@ const stageOrder: SupplierOrderStatus[] = ["new", "confirmed", "preparing", "rea
 
 export default function SupplierOrdersPage() {
   const { push } = useToast();
-  const [orders, setOrders] = useState<SupplierOrder[]>(supplierOrders);
+  const supplierId = useCurrentSupplierId();
   const [filter, setFilter] = useState<"all" | "pending" | "completed">("all");
+  // The database decides which rows this store may see; no local copy.
+  const orders: SupplierOrder[] = useSupplierOrders().filter(
+    (order) => !supplierId || order.supplierId === supplierId,
+  );
 
   const visible = useMemo(() => {
     if (filter === "pending") return orders.filter((o) => o.status !== "completed");
@@ -22,11 +27,16 @@ export default function SupplierOrdersPage() {
     return orders;
   }, [orders, filter]);
 
-  const advance = (o: SupplierOrder) => {
+  const advance = async (o: SupplierOrder) => {
     const idx = stageOrder.indexOf(o.status);
     if (idx >= stageOrder.length - 1) return;
     const next = stageOrder[idx + 1];
-    setOrders((prev) => prev.map((x) => (x.id === o.id ? { ...x, status: next } : x)));
+    // The status is written by the server; the list refreshes from the row.
+    const result = await updateSupplierOrderStatus(o.id, next);
+    if (!result.ok) {
+      push({ title: "Not updated", message: result.error ?? "The status change was rejected.", icon: "error" });
+      return;
+    }
     if (next === "confirmed") push({ title: "Order accepted", message: `${o.number} confirmed. MedLink notified.`, icon: "success" });
     if (next === "ready") push({ title: "Marked as ready", message: `MedLink has been notified to collect ${o.number}.`, icon: "order" });
   };
@@ -122,7 +132,12 @@ export default function SupplierOrdersPage() {
         <button className={filter === "completed" ? "chip chip-active" : "chip"} onClick={() => setFilter("completed")}>Completed ({orders.filter((o) => o.status === "completed").length})</button>
       </div>
 
-      <DataTable columns={columns} rows={visible} minWidth={780} />
+      <DataTable
+        columns={columns}
+        rows={visible}
+        minWidth={780}
+        empty={filter === "all" ? "No orders for your store yet." : "No orders in this view."}
+      />
     </div>
   );
 }

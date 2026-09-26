@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { MapPin, Percent, Plus, RotateCcw, Save, Trash2, Truck } from "lucide-react";
-import { usePricing, updatePricingConfig } from "../../lib/registry";
+import { refreshMarketplace, updatePricingConfig, usePricing } from "../../lib/registry";
 import { useToast } from "../../lib/toast";
 import { mwk } from "../../lib/format";
 import DashboardCard from "../../components/ui/DashboardCard";
-import { seedPricing } from "../../data/transactions";
 
 interface CityDraft {
   city: string;
@@ -31,7 +30,8 @@ export default function AdminPricingPage() {
     Object.entries(pricing.deliveryFees).map(([city, fee]) => ({ city, fee: String(fee) })),
   );
 
-  /* Keep the form in sync if pricing is updated (e.g. after save or reset). */
+  /* Mirror the stored rates into the form: a save, a reload or another
+     admin's edit all end up on screen as the source of truth. */
   useEffect(() => {
     setRatePct(rateToPct(pricing.serviceFeeRate));
     setDefaultFee(String(pricing.defaultDeliveryFee));
@@ -45,7 +45,7 @@ export default function AdminPricingPage() {
     setCities((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
   }
 
-  function save(): void {
+  async function save(): Promise<void> {
     const pctNum = Number(ratePct);
     if (!Number.isFinite(pctNum) || pctNum < 0 || pctNum > 100) {
       push({ title: "Invalid service fee", message: "Enter a percentage between 0 and 100.", icon: "error" });
@@ -67,11 +67,15 @@ export default function AdminPricingPage() {
       }
       deliveryFees[name] = Math.round(fee);
     }
-    updatePricingConfig({
+    const result = await updatePricingConfig({
       serviceFeeRate: pctToRate(pctNum),
       defaultDeliveryFee: Math.round(defaultNum),
       deliveryFees,
     });
+    if (!result.ok) {
+      push({ title: "Pricing not saved", message: result.error ?? "The server rejected the change.", icon: "error" });
+      return;
+    }
     push({
       title: "Pricing updated",
       message: `${pctNum}% service fee and ${Object.keys(deliveryFees).length} city rates are now live.`,
@@ -79,9 +83,10 @@ export default function AdminPricingPage() {
     });
   }
 
-  function resetDefaults(): void {
-    updatePricingConfig({ ...seedPricing });
-    push({ title: "Defaults restored", message: "Preloaded rates have been reapplied.", icon: "info" });
+  /** Discard local edits and re-read the rates the database actually holds. */
+  async function reload(): Promise<void> {
+    await refreshMarketplace();
+    push({ title: "Reloaded", message: "The live rates from the database are shown again.", icon: "info" });
   }
 
   return (
@@ -206,11 +211,11 @@ export default function AdminPricingPage() {
       </div>
 
       <div className="row" style={{ gap: 10 }}>
-        <button className="btn btn-primary btn-lg" onClick={save}>
+        <button className="btn btn-primary btn-lg" onClick={() => void save()}>
           <Save size={16} /> Save pricing
         </button>
-        <button className="btn btn-ghost" onClick={resetDefaults}>
-          <RotateCcw size={16} /> Reset to defaults
+        <button className="btn btn-ghost" onClick={() => void reload()}>
+          <RotateCcw size={16} /> Reload from server
         </button>
       </div>
     </div>

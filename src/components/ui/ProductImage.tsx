@@ -1,4 +1,4 @@
-import { categoryById } from "../../data/categories";
+﻿import { getCategoryById } from "../../lib/registry";
 import { hashString } from "../../lib/format";
 import { CategoryIcon } from "./Icon";
 
@@ -28,7 +28,7 @@ export default function ProductImage({
   height?: number;
   iconName?: string;
 }) {
-  const category = categoryById(categoryId);
+  const category = getCategoryById(categoryId);
   const [c1, c2] = category?.gradient ?? ["#0B1120", "#FFB74D"];
   const variant = artVariants[hashString(productId) % artVariants.length];
   const icon = iconName ?? variant.icon;

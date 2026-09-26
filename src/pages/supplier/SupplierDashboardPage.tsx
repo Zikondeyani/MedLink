@@ -1,7 +1,14 @@
 import { ClipboardList, Package, ShoppingBag, TrendingUp, Wallet } from "lucide-react";
 import { Link } from "react-router-dom";
-import { supplierDashboardStats, monthlySales, monthlyOrders, topProducts, categorySales } from "../../data/sales";
-import { supplierOrders } from "../../data/orders";
+import {
+  useCategorySales,
+  useMonthlyOrders,
+  useMonthlySales,
+  useSupplierDashboardStats,
+  useTopProducts,
+} from "../../lib/analytics";
+import { useSupplierOrders } from "../../lib/customerData";
+import { useCurrentSupplierId } from "../../lib/registry";
 import { mwk, mwkCompact, shortDate } from "../../lib/format";
 import DashboardCard from "../../components/ui/DashboardCard";
 import { LineChart, BarChart, DonutChart } from "../../components/charts/Charts";
@@ -10,7 +17,15 @@ import DataTable from "../../components/ui/DataTable";
 import type { Column } from "../../components/ui/DataTable";
 
 export default function SupplierDashboardPage() {
-  const recentOrders = supplierOrders.slice(0, 5);
+  // This store's own rows — never another store's.
+  const supplierId = useCurrentSupplierId() ?? undefined;
+  const supplierDashboardStats = useSupplierDashboardStats(supplierId);
+  const monthlySales = useMonthlySales(supplierId);
+  const monthlyOrders = useMonthlyOrders(supplierId);
+  const topProducts = useTopProducts(supplierId);
+  const categorySales = useCategorySales(supplierId);
+  const storeOrders = useSupplierOrders().filter((order) => order.supplierId === supplierId);
+  const recentOrders = storeOrders.slice(0, 5);
 
   const columns: Column<(typeof recentOrders)[number]>[] = [
     {
@@ -54,15 +69,13 @@ export default function SupplierDashboardPage() {
           icon={<Wallet size={19} />}
           label="Total Sales"
           value={mwk(supplierDashboardStats.totalSales)}
-          trend={12.4}
-          sub="This month"
+          sub="Goods value, all time"
           tone="teal"
         />
         <DashboardCard
           icon={<ShoppingBag size={19} />}
           label="Orders"
           value={String(supplierDashboardStats.orders)}
-          trend={8.2}
           sub="All time"
           tone="navy"
         />
@@ -70,7 +83,7 @@ export default function SupplierDashboardPage() {
           icon={<Package size={19} />}
           label="Products"
           value={String(supplierDashboardStats.products)}
-          sub="245 listed"
+          sub="Published"
           tone="green"
         />
         <DashboardCard
@@ -135,7 +148,12 @@ export default function SupplierDashboardPage() {
           <Link to="/supplier/orders" className="link small">View all</Link>
         </div>
         <div style={{ marginInline: -24, marginBottom: -24 }}>
-          <DataTable columns={columns} rows={recentOrders} minWidth={720} />
+          <DataTable
+          columns={columns}
+          rows={recentOrders}
+          minWidth={720}
+          empty="No orders for your store yet."
+        />
         </div>
       </div>
 

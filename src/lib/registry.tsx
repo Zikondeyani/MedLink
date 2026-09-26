@@ -1,12 +1,43 @@
 /* ============================================================
-   MedLink — shared live store
-   Front-end only: module-level state + useSyncExternalStore so
-   Admins, supplier applications and the public marketplace all
-   observe the same data without a backend.
+   MedLink — the marketplace store
+
+   One module-level cache of the real database, shared by every page
+   through useSyncExternalStore. The cache is filled by
+   loadMarketplace() (called from the auth provider on mount, on
+   sign-in and on sign-out) and refreshed after every mutation, so
+   several pages can never disagree about what the database says.
+
+   Nothing in here is seeded or simulated: if a table is empty the
+   array is empty and the page shows its empty state.
+
+   Writes are real too. Money is never computed in the browser for
+   anything that matters — checkout and escrow release go through
+   SECURITY DEFINER RPCs in Postgres (see place_order() and
+   admin_release_supplier_funds() in the marketplace migration).
    ============================================================ */
+
 import { useSyncExternalStore } from "react";
+import { supabase } from "./supabase";
+import type { Database, Json } from "./database.types";
+import {
+  callReleaseFunds,
+  fetchApplications,
+  fetchBlockedAccounts,
+  fetchMoney,
+  fetchOwnApplication,
+  fetchPublicSnapshot,
+  slugify,
+  toCategory,
+  type MoneySnapshot,
+} from "./db";
+import {
+  getAllOrders,
+  getAllSupplierOrders,
+  loadCustomerData,
+  updateCustomerOrderStatus,
+} from "./customerData";
+import { reviewSupplierApplicationOnBackend } from "./onboarding";
 import type {
-  ApplicationDocument,
   Category,
   CustomerOrderStatus,
   DeliveryQuote,
@@ -15,331 +46,55 @@ import type {
   PayoutRecord,
   PaymentTransaction,
   PricingConfig,
+  Product,
+  ProductSpec,
+  ProductStatus,
   Supplier,
   SupplierApplication,
   SupplierOperatingAccount,
 } from "../data/types";
-import { categories as seedCategories } from "../data/categories";
-import { suppliers as seedSuppliers } from "../data/suppliers";
-import { seedApplications } from "../data/applications";
-import { getAllOrders, updateCustomerOrderStatus } from "./customerData";
-import { seedPayouts, seedPaymentTransactions, seedPricing, seedReleasedOrders } from "../data/transactions";
+
+export { slugify };
+
+/** Row-shaped update payloads, so a mistyped column fails the build. */
+type CategoryUpdate = Database["public"]["Tables"]["categories"]["Update"];
+type SupplierUpdate = Database["public"]["Tables"]["suppliers"]["Update"];
+type ProductUpdate = Database["public"]["Tables"]["products"]["Update"];
+type PricingUpdate = Database["public"]["Tables"]["pricing_config"]["Update"];
+
+/* ------------------------------------------------------------
+   Cache + subscription
+   ------------------------------------------------------------ */
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
-const PAYMENT_TRANSACTIONS_KEY = "medlink.registry.payment-transactions.v1";
-const RELEASED_ORDERS_KEY = "medlink.registry.released-orders.v1";
-const PAYOUTS_KEY = "medlink.registry.payouts.v1";
-const APPLICATIONS_KEY = "medlink.registry.applications.v1";
-const SUPPLIERS_KEY = "medlink.registry.suppliers.v1";
 
-/* ---------- persistence helpers ----------
-   Registry collections are merged on top of their localStorage copies so admin
-   actions (KYC review, suspension, escrow release) survive a page reload. */
+let categories: Category[] = [];
+let suppliers: Supplier[] = [];
+let products: Product[] = [];
+let activeProducts: Product[] = [];
+let applications: SupplierApplication[] = [];
+/** The signed-in supplier's own KYC row (RLS: their application only). */
+let ownApplication: SupplierApplication | undefined;
+let pricing: PricingConfig = { serviceFeeRate: 0, deliveryFees: {}, defaultDeliveryFee: 0 };
+let payouts: PayoutRecord[] = [];
+let payments: PaymentTransaction[] = [];
+let releasedOrders: Record<string, string[]> = {};
+let blockedAccounts: Record<string, boolean> = {};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+let loading = false;
+let loaded = false;
+let loadError: string | null = null;
+let lastSynced: string | null = null;
+
+/** The signed-in account, as reported by the auth provider. */
+export interface ActiveAccount {
+  id: string;
+  email: string;
+  role: "customer" | "supplier" | "admin";
+  supplierId?: string;
 }
-
-function isFiniteNonNegative(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
-}
-
-function isStringList(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-/* ---------- suppliers ---------- */
-
-function isSupplierDelivery(value: unknown): value is Supplier["delivery"] {
-  if (!isRecord(value)) return false;
-  return isFiniteNonNegative(value.fee) && typeof value.estimate === "string";
-}
-
-function isOperatingAccount(value: unknown): value is SupplierOperatingAccount {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.bankName === "string" &&
-    typeof value.accountName === "string" &&
-    typeof value.accountNumber === "string" &&
-    (value.branch === undefined || typeof value.branch === "string") &&
-    (value.mobileMoney === undefined || typeof value.mobileMoney === "string")
-  );
-}
-
-function isSupplier(value: unknown): value is Supplier {
-  if (!isRecord(value)) return false;
-  const location = value.location;
-  const bannerGradient = value.bannerGradient;
-  return (
-    typeof value.id === "string" &&
-    (value.applicationId === undefined || typeof value.applicationId === "string") &&
-    typeof value.name === "string" &&
-    typeof value.slug === "string" &&
-    typeof value.color === "string" &&
-    typeof value.verified === "boolean" &&
-    (value.suspended === undefined || typeof value.suspended === "boolean") &&
-    typeof value.category === "string" &&
-    isFiniteNonNegative(value.rating) &&
-    isFiniteNonNegative(value.reviewCount) &&
-    isFiniteNonNegative(value.productCount) &&
-    isRecord(location) &&
-    typeof location.city === "string" &&
-    typeof location.area === "string" &&
-    typeof value.phone === "string" &&
-    typeof value.email === "string" &&
-    typeof value.description === "string" &&
-    Array.isArray(bannerGradient) &&
-    bannerGradient.length === 2 &&
-    bannerGradient.every((stop) => typeof stop === "string") &&
-    isSupplierDelivery(value.delivery) &&
-    typeof value.joined === "string" &&
-    isFiniteNonNegative(value.art) &&
-    (value.operatingAccount === undefined || isOperatingAccount(value.operatingAccount))
-  );
-}
-
-function readSuppliers(): Supplier[] {
-  try {
-    const raw = localStorage.getItem(SUPPLIERS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    const stored = Array.isArray(parsed) ? parsed.filter(isSupplier) : [];
-    const byId = new Map<string, Supplier>(seedSuppliers.map((supplier) => [supplier.id, supplier]));
-    for (const supplier of stored) byId.set(supplier.id, supplier);
-    return [...byId.values()];
-  } catch {
-    return [...seedSuppliers];
-  }
-}
-
-function persistSuppliers(): void {
-  try {
-    localStorage.setItem(SUPPLIERS_KEY, JSON.stringify(suppliers));
-  } catch {
-    /* storage unavailable — keep the in-memory demo working */
-  }
-}
-
-/* ---------- supplier applications / KYC ---------- */
-
-const KYC_STATUSES: KycStatus[] = ["pending", "approved", "rejected"];
-
-function isKycStatus(value: unknown): value is KycStatus {
-  return typeof value === "string" && KYC_STATUSES.includes(value as KycStatus);
-}
-
-function isApplicationDocument(value: unknown): value is ApplicationDocument {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.label === "string" &&
-    typeof value.name === "string" &&
-    typeof value.size === "string" &&
-    typeof value.uploadedAt === "string"
-  );
-}
-
-function isSupplierApplication(value: unknown): value is SupplierApplication {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.ref === "string" &&
-    typeof value.businessName === "string" &&
-    typeof value.businessType === "string" &&
-    typeof value.categoryFocus === "string" &&
-    (value.website === undefined || typeof value.website === "string") &&
-    typeof value.email === "string" &&
-    typeof value.phone === "string" &&
-    typeof value.city === "string" &&
-    typeof value.area === "string" &&
-    typeof value.registrationNumber === "string" &&
-    typeof value.directorName === "string" &&
-    typeof value.directorIdType === "string" &&
-    typeof value.directorIdNumber === "string" &&
-    Array.isArray(value.documents) &&
-    value.documents.every(isApplicationDocument) &&
-    isKycStatus(value.status) &&
-    typeof value.submittedAt === "string" &&
-    (value.reviewedAt === undefined || typeof value.reviewedAt === "string") &&
-    (value.reviewNote === undefined || typeof value.reviewNote === "string") &&
-    (value.operatingAccount === undefined || isOperatingAccount(value.operatingAccount))
-  );
-}
-
-/** Newest first, so an application submitted this session keeps its place at the top. */
-function readApplications(): SupplierApplication[] {
-  try {
-    const raw = localStorage.getItem(APPLICATIONS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    const stored = Array.isArray(parsed) ? parsed.filter(isSupplierApplication) : [];
-    const known = new Set(seedApplications.map((application) => application.id));
-    const byId = new Map<string, SupplierApplication>(
-      seedApplications.map((application) => [application.id, application]),
-    );
-    const submitted: SupplierApplication[] = [];
-    for (const application of stored) {
-      if (known.has(application.id)) byId.set(application.id, application);
-      else submitted.push(application);
-    }
-    return [...submitted, ...byId.values()];
-  } catch {
-    return [...seedApplications];
-  }
-}
-
-function persistApplications(): void {
-  try {
-    localStorage.setItem(APPLICATIONS_KEY, JSON.stringify(applications));
-  } catch {
-    /* storage unavailable — keep the in-memory demo working */
-  }
-}
-
-let categories: Category[] = [...seedCategories];
-let suppliers: Supplier[] = readSuppliers();
-let applications: SupplierApplication[] = readApplications();
-
-/* ---------- escrow releases & payouts ---------- */
-
-function readReleasedOrders(): Record<string, string[]> {
-  try {
-    const raw = localStorage.getItem(RELEASED_ORDERS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : {};
-    if (!isRecord(parsed)) return { ...seedReleasedOrders };
-    const merged: Record<string, string[]> = { ...seedReleasedOrders };
-    for (const [supplierId, orderIds] of Object.entries(parsed)) {
-      if (!isStringList(orderIds)) continue;
-      merged[supplierId] = [...new Set([...(seedReleasedOrders[supplierId] ?? []), ...orderIds])];
-    }
-    return merged;
-  } catch {
-    return { ...seedReleasedOrders };
-  }
-}
-
-function persistReleasedOrders(): void {
-  try {
-    localStorage.setItem(RELEASED_ORDERS_KEY, JSON.stringify(releasedOrders));
-  } catch {
-    /* storage unavailable — keep the in-memory demo working */
-  }
-}
-
-function isPayoutRecord(value: unknown): value is PayoutRecord {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.supplierId === "string" &&
-    isFiniteNonNegative(value.amount) &&
-    isFiniteNonNegative(value.serviceFee) &&
-    isStringList(value.orderNumbers) &&
-    typeof value.releasedAt === "string" &&
-    typeof value.method === "string" &&
-    typeof value.accountSummary === "string"
-  );
-}
-
-/** Newest first, so a release made this session keeps its place at the top. */
-function readPayouts(): PayoutRecord[] {
-  try {
-    const raw = localStorage.getItem(PAYOUTS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    const stored = Array.isArray(parsed) ? parsed.filter(isPayoutRecord) : [];
-    const known = new Set(seedPayouts.map((payout) => payout.id));
-    const byId = new Map<string, PayoutRecord>(seedPayouts.map((payout) => [payout.id, payout]));
-    const released: PayoutRecord[] = [];
-    for (const payout of stored) {
-      if (known.has(payout.id)) byId.set(payout.id, payout);
-      else released.push(payout);
-    }
-    return [...released, ...byId.values()];
-  } catch {
-    return [...seedPayouts];
-  }
-}
-
-function persistPayouts(): void {
-  try {
-    localStorage.setItem(PAYOUTS_KEY, JSON.stringify(payouts));
-  } catch {
-    /* storage unavailable — keep the in-memory demo working */
-  }
-}
-
-/* Escrow / payouts: which order ids have been settled per supplier */
-let releasedOrders: Record<string, string[]> = readReleasedOrders();
-let payouts: PayoutRecord[] = readPayouts();
-
-function isPaymentTransaction(value: unknown): value is PaymentTransaction {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    (value.orderId === undefined || typeof value.orderId === "string") &&
-    typeof value.orderNumber === "string" &&
-    typeof value.customerName === "string" &&
-    typeof value.method === "string" &&
-    typeof value.reference === "string" &&
-    typeof value.amount === "number" &&
-    typeof value.goods === "number" &&
-    typeof value.serviceFee === "number" &&
-    typeof value.deliveryFee === "number" &&
-    (value.status === "succeeded" || value.status === "failed" || value.status === "refunded") &&
-    typeof value.paidAt === "string"
-  );
-}
-
-function readPaymentTransactions(): PaymentTransaction[] {
-  try {
-    const raw = localStorage.getItem(PAYMENT_TRANSACTIONS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    const stored = Array.isArray(parsed) ? parsed.filter(isPaymentTransaction) : [];
-    const byId = new Map<string, PaymentTransaction>(
-      [...seedPaymentTransactions, ...stored].map((transaction) => [transaction.id, transaction]),
-    );
-    return [...byId.values()];
-  } catch {
-    return [...seedPaymentTransactions];
-  }
-}
-
-let paymentTransactions: PaymentTransaction[] = readPaymentTransactions();
-
-/* MedLink pricing — admin-editable via the Pricing page (no hard-coded fee). */
-let pricing: PricingConfig = { ...seedPricing };
-
-export function getPricing(): PricingConfig {
-  return pricing;
-}
-
-/** Pick a live delivery fee quote for a buyer address city. */
-export function quoteDelivery(city: string): DeliveryQuote {
-  const p = pricing;
-  const deliveryFees = p.deliveryFees ?? {};
-  const fee = deliveryFees[city] ?? p.defaultDeliveryFee ?? 7500;
-  return { baseFee: fee, estimated: "1–2 days" };
-}
-
-/** MedLink's share of the goods value on an order (live admin rate). */
-export function serviceFee(subtotal: number): number {
-  return Math.round(subtotal * getPricing().serviceFeeRate);
-}
-
-export function usePricing(): PricingConfig {
-  return useStore(() => pricing);
-}
-
-/** Persist an admin's pricing change (rate + delivery fees) app-wide. */
-export function updatePricingConfig(patch: Partial<PricingConfig>): void {
-  pricing = { ...pricing, ...patch };
-  emit();
-}
-
-/* Admin-only session flags (products, orders, customers) */
-type ProductFlags = Record<string, { featured?: boolean; hidden?: boolean }>;
-type OrderStatusMap = Record<string, CustomerOrderStatus>;
-type CustomerFlags = Record<string, { blocked?: boolean }>;
-let productFlags: ProductFlags = {};
-let orderStatuses: OrderStatusMap = {};
-let customerFlags: CustomerFlags = {};
+let account: ActiveAccount | null = null;
 
 function subscribe(listener: Listener): () => void {
   listeners.add(listener);
@@ -349,361 +104,663 @@ function subscribe(listener: Listener): () => void {
 }
 
 function emit(): void {
-  listeners.forEach((l) => l());
+  for (const listener of listeners) listener();
 }
 
 function useStore<T>(getSnapshot: () => T): T {
-  return useSyncExternalStore(subscribe, getSnapshot);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-/* ---------- helpers ---------- */
-
-export function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+function supplierNameMap(): Map<string, string> {
+  return new Map(suppliers.map((supplier) => [supplier.id, supplier.name]));
 }
 
-const REF_COUNTER_SEED = 49;
-let refCounter = REF_COUNTER_SEED;
+/* ------------------------------------------------------------
+   Bootstrap
+   ------------------------------------------------------------ */
 
-function nextApplicationRef(): string {
-  refCounter += 1;
-  return `APL-2026-${String(refCounter).padStart(3, "0")}`;
+/** The auth provider reports the active account here. */
+export function setActiveAccount(next: ActiveAccount | null): void {
+  account = next;
 }
 
-/* ---------- categories ---------- */
+/** Loading / error state, for pages that must wait for real data. */
+export interface DataStatus {
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+  lastSynced: string | null;
+}
+
+export function useDataStatus(): DataStatus {
+  return useStore(() => ({ loading, loaded, error: loadError, lastSynced }));
+}
+
+/**
+ * Re-read everything the signed-in account may see. Called on mount, on
+ * sign-in, on sign-out and after mutations that other pages may show.
+ */
+export async function loadMarketplace(): Promise<void> {
+  loading = true;
+  emit();
+  try {
+    const snapshot = await fetchPublicSnapshot();
+    categories = snapshot.categories;
+    suppliers = snapshot.suppliers;
+    products = snapshot.products;
+    pricing = snapshot.pricing;
+    recomputeDerived();
+
+    if (account?.role === "admin") {
+      // Administrators also moderate the KYC queue, payouts and block flags.
+      const [applicationRows, money, blocked] = await Promise.all([
+        fetchApplications(),
+        fetchMoney(),
+        fetchBlockedAccounts(),
+      ]);
+      applications = applicationRows;
+      const moneySnapshot: MoneySnapshot = money;
+      payouts = moneySnapshot.payouts;
+      payments = moneySnapshot.payments;
+      releasedOrders = moneySnapshot.releasedOrders;
+      blockedAccounts = blocked;
+      ownApplication = undefined;
+    } else {
+      applications = [];
+      // A store owner may read the KYC row their own store was approved from.
+      ownApplication = account?.role === "supplier" ? await fetchOwnApplication() : undefined;
+    }
+
+    await loadCustomerData(account?.email ?? "", supplierNameMap());
+
+    loadError = null;
+    loaded = true;
+    lastSynced = new Date().toISOString();
+  } catch (err) {
+    loadError = err instanceof Error ? err.message : "Could not load the marketplace.";
+  } finally {
+    loading = false;
+    emit();
+  }
+}
+
+/** Alias used by pages that offer a manual "refresh" affordance. */
+export const refreshMarketplace = loadMarketplace;
+
+function recomputeDerived(): void {
+  activeProducts = products.filter((product) => product.status === "active" && !product.hidden);
+  for (const supplier of suppliers) {
+    supplier.productCount = products.filter((product) => product.supplierId === supplier.id).length;
+  }
+  for (const category of categories) {
+    category.productCount = products.filter((product) => product.categoryId === category.id).length;
+  }
+}
+
+/* ------------------------------------------------------------
+   Pricing (admin-editable, stored in Postgres)
+   ------------------------------------------------------------ */
+
+export function getPricing(): PricingConfig {
+  return pricing;
+}
+
+export function usePricing(): PricingConfig {
+  return useStore(() => pricing);
+}
+
+/** Delivery fee quote for a buyer address city (live admin pricing). */
+export function quoteDelivery(city: string): DeliveryQuote {
+  const fee = pricing.deliveryFees?.[city] ?? pricing.defaultDeliveryFee ?? 0;
+  return { baseFee: fee, estimated: "1–2 days" };
+}
+
+/** MedLink's share of the goods value (used for display only — the server decides). */
+export function serviceFee(subtotal: number): number {
+  return Math.round(subtotal * pricing.serviceFeeRate);
+}
+
+/** Persist an admin pricing change. */
+export async function updatePricingConfig(patch: Partial<PricingConfig>): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const update: PricingUpdate = {};
+  if (patch.serviceFeeRate !== undefined) update.service_fee_rate = patch.serviceFeeRate;
+  if (patch.defaultDeliveryFee !== undefined) update.default_delivery_fee = patch.defaultDeliveryFee;
+  if (patch.deliveryFees !== undefined) update.delivery_fees = patch.deliveryFees;
+
+  const { error } = await supabase.from("pricing_config").update(update).eq("id", true);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------
+   Categories
+   ------------------------------------------------------------ */
+
+/* ------------------------------------------------------------
+   Non-hook reads (for plain functions outside components)
+   ------------------------------------------------------------ */
+
+export function getCategories(): Category[] {
+  return categories;
+}
+
+export function getSuppliers(): Supplier[] {
+  return suppliers;
+}
+
+export function getProducts(): Product[] {
+  return products;
+}
+
+export function getActiveProducts(): Product[] {
+  return activeProducts;
+}
 
 export function useCategories(): Category[] {
   return useStore(() => categories);
 }
 
 export function getCategoryById(id: string): Category | undefined {
-  return categories.find((c) => c.id === id);
+  return categories.find((category) => category.id === id);
 }
 
 export function getCategoryBySlug(slug: string): Category | undefined {
-  return categories.find((c) => c.slug === slug);
+  return categories.find((category) => category.slug === slug);
 }
 
-export function addCategory(input: {
+/** Human label for a category id, tolerant of an unknown/deleted category. */
+export function categoryName(id: string): string {
+  return getCategoryById(id)?.name ?? "Uncategorised";
+}
+
+export async function addCategory(input: {
   name: string;
   description: string;
   icon: string;
-}): Category {
+}): Promise<{ ok: boolean; category?: Category; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
   const base = slugify(input.name) || "category";
-  const category: Category = {
-    id: `cat-${base}-${Date.now().toString(36)}`,
-    name: input.name.trim(),
-    slug: `${base}-${Date.now().toString(36).slice(-4)}`,
-    description: input.description.trim(),
-    icon: input.icon,
-    productCount: 0,
-    gradient: ["#0B1120", "#FFB74D"],
-  };
-  categories = [...categories, category];
-  emit();
-  return category;
+  const id = `cat-${base}-${Date.now().toString(36)}`;
+  const slug = `${base}-${Date.now().toString(36).slice(-4)}`;
+
+  const { data, error } = await supabase
+    .from("categories")
+    .insert({ id, name: input.name.trim(), slug, description: input.description.trim(), icon: input.icon })
+    .select()
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+
+  await loadMarketplace();
+  return { ok: true, category: data ? toCategory(data, 0) : undefined };
 }
 
-export function updateCategory(id: string, patch: Partial<Pick<Category, "name" | "description" | "icon">>): void {
-  categories = categories.map((c) =>
-    c.id === id
-      ? {
-          ...c,
-          name: patch.name?.trim() ?? c.name,
-          description: patch.description?.trim() ?? c.description,
-          icon: patch.icon ?? c.icon,
-        }
-      : c,
-  );
-  emit();
+export async function updateCategory(
+  id: string,
+  patch: Partial<Pick<Category, "name" | "description" | "icon">>,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const update: CategoryUpdate = {};
+  if (patch.name !== undefined) update.name = patch.name.trim();
+  if (patch.description !== undefined) update.description = patch.description.trim();
+  if (patch.icon !== undefined) update.icon = patch.icon;
+
+  const { error } = await supabase.from("categories").update(update).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
 }
 
-export function removeCategory(id: string): void {
-  categories = categories.filter((c) => c.id !== id);
-  emit();
+export async function removeCategory(id: string): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const { error } = await supabase.from("categories").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
 }
 
-/* ---------- suppliers ---------- */
+/* ------------------------------------------------------------
+   Suppliers
+   ------------------------------------------------------------ */
 
 export function useSuppliers(): Supplier[] {
   return useStore(() => suppliers);
 }
 
 export function getSupplierById(id: string): Supplier | undefined {
-  return suppliers.find((s) => s.id === id);
+  return suppliers.find((supplier) => supplier.id === id);
 }
 
 export function getSupplierBySlug(slug: string): Supplier | undefined {
-  return suppliers.find((s) => s.slug === slug);
+  return suppliers.find((supplier) => supplier.slug === slug);
 }
 
-export function setSupplierSuspended(id: string, suspended: boolean): void {
-  suppliers = suppliers.map((s) => (s.id === id ? { ...s, suspended } : s));
-  persistSuppliers();
-  emit();
+/** The store the signed-in supplier account owns. */
+export function useCurrentSupplierId(): string | null {
+  useStore(() => loading); // re-render when the cache changes
+  return account?.role === "supplier" ? (account.supplierId ?? null) : null;
 }
 
-export function toggleSupplierVerified(id: string): void {
-  suppliers = suppliers.map((s) => (s.id === id ? { ...s, verified: !s.verified } : s));
-  persistSuppliers();
-  emit();
+export function useMySupplier(): Supplier | undefined {
+  const id = useCurrentSupplierId();
+  return id ? getSupplierById(id) : undefined;
 }
 
-export function removeSupplier(id: string): void {
-  suppliers = suppliers.filter((s) => s.id !== id);
-  persistSuppliers();
-  emit();
+/** Presentation fields a store owner may change (the trigger protects trust columns). */
+export async function updateMySupplier(
+  patch: Partial<{
+    name: string;
+    description: string;
+    phone: string;
+    email: string;
+    city: string;
+    area: string;
+    bannerImage: string;
+    logoImage: string;
+    deliveryFee: number;
+    deliveryEstimate: string;
+  }>,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const supplierId = account?.supplierId;
+  if (!supplierId) return { ok: false, error: "Your account is not linked to a store yet." };
+
+  const update: SupplierUpdate = {};
+  if (patch.name !== undefined) update.name = patch.name.trim();
+  if (patch.description !== undefined) update.description = patch.description.trim();
+  if (patch.phone !== undefined) update.phone = patch.phone.trim();
+  if (patch.email !== undefined) update.email = patch.email.trim();
+  if (patch.city !== undefined) update.city = patch.city.trim();
+  if (patch.area !== undefined) update.area = patch.area.trim();
+  if (patch.bannerImage !== undefined) update.banner_image = patch.bannerImage;
+  if (patch.logoImage !== undefined) update.logo_image = patch.logoImage;
+  if (patch.deliveryFee !== undefined) update.delivery_fee = patch.deliveryFee;
+  if (patch.deliveryEstimate !== undefined) update.delivery_estimate = patch.deliveryEstimate;
+
+  const { error } = await supabase.from("suppliers").update(update).eq("id", supplierId);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
 }
 
-function addSupplierFromApplication(app: SupplierApplication): void {
-  const base = slugify(app.businessName);
-  if (suppliers.some((s) => s.slug === base)) return;
-  const supplier: Supplier = {
-    id: `sup-${base}`,
-    name: app.businessName,
-    slug: base,
-    color: "#F59E0B",
-    verified: true,
-    category: app.categoryFocus,
-    rating: 0,
-    reviewCount: 0,
-    productCount: 0,
-    location: { city: app.city, area: app.area },
-    phone: app.phone,
-    email: app.email,
-    description:
-      `${app.businessName} is a ${app.businessType.toLocaleLowerCase()} registered on MedLink after passing KYC verification. ` +
-      `Focused on ${app.categoryFocus.toLocaleLowerCase()} for healthcare buyers across Malawi.`,
-    bannerGradient: ["#0B1120", "#F59E0B"],
-    delivery: { fee: 5000, estimate: "2–3 days" },
-    joined: new Date().toLocaleString("en-GB", { month: "short", year: "numeric" }),
-    art: 1 as Supplier["art"],
+/** Administrator: hide or restore a store from the public marketplace. */
+export async function setSupplierSuspended(
+  id: string,
+  suspended: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const { error } = await supabase.from("suppliers").update({ suspended }).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
+}
+
+export async function toggleSupplierVerified(id: string): Promise<{ ok: boolean; error?: string }> {
+  const supplier = getSupplierById(id);
+  if (!supplier) return { ok: false, error: "That store was not found." };
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const { error } = await supabase.from("suppliers").update({ verified: !supplier.verified }).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
+}
+
+export async function removeSupplier(id: string): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const { error } = await supabase.from("suppliers").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------
+   Products
+   ------------------------------------------------------------ */
+
+export function useProducts(): Product[] {
+  return useStore(() => products);
+}
+
+/** The published catalogue — what a buyer may see. */
+export function useActiveProducts(): Product[] {
+  return useStore(() => activeProducts);
+}
+
+export function productById(id: string): Product | undefined {
+  return products.find((product) => product.id === id);
+}
+
+export function productBySlug(slug: string): Product | undefined {
+  return products.find((product) => product.slug === slug);
+}
+
+export function productsBySupplier(supplierId: string): Product[] {
+  return products.filter((product) => product.supplierId === supplierId);
+}
+
+export function productsByCategory(categoryId: string): Product[] {
+  return products.filter((product) => product.categoryId === categoryId);
+}
+
+export interface ProductInput {
+  name: string;
+  categoryId: string;
+  description: string;
+  price: number;
+  unit: string;
+  stock: number;
+  brand: string;
+  model: string;
+  sku: string;
+  specs: ProductSpec[];
+  warranty: string;
+  status: ProductStatus;
+  image?: string;
+  images: string[];
+  tags?: string[];
+}
+
+/** Create a product for the signed-in supplier's store. */
+export async function addProduct(input: ProductInput): Promise<{ ok: boolean; id?: string; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const supplierId = account?.supplierId;
+  if (!supplierId) return { ok: false, error: "Your account is not linked to a store yet." };
+
+  const name = input.name.trim();
+  if (!name) return { ok: false, error: "A product needs a name." };
+
+  const row: Database["public"]["Tables"]["products"]["Insert"] = {
+    supplier_id: supplierId,
+    category_id: input.categoryId || null,
+    name,
+    slug: uniqueProductSlug(name),
+    description: input.description.trim(),
+    price: Math.max(0, input.price),
+    unit: input.unit.trim() || "unit",
+    stock: Math.max(0, Math.trunc(input.stock)),
+    brand: input.brand.trim(),
+    model: input.model.trim(),
+    sku: input.sku.trim(),
+    // jsonb columns carry domain objects, so the cast is the boundary.
+    specs: input.specs as unknown as Json,
+    warranty: input.warranty.trim(),
+    status: input.status,
+    image: input.image ?? null,
+    images: input.images,
+    tags: input.tags ?? [],
   };
-  if (app.operatingAccount) supplier.operatingAccount = app.operatingAccount;
-  suppliers = [...suppliers, supplier];
-  persistSuppliers();
+
+  const { data, error } = await supabase.from("products").insert(row).select("id").maybeSingle();
+  if (error) return { ok: false, error: error.message };
+
+  await loadMarketplace();
+  return { ok: true, id: data?.id };
 }
 
-/* ---------- applications / KYC ---------- */
+export async function updateProduct(
+  id: string,
+  input: Partial<ProductInput>,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const update: ProductUpdate = {};
+  if (input.name !== undefined) update.name = input.name.trim();
+  if (input.categoryId !== undefined) update.category_id = input.categoryId || null;
+  if (input.description !== undefined) update.description = input.description.trim();
+  if (input.price !== undefined) update.price = Math.max(0, input.price);
+  if (input.unit !== undefined) update.unit = input.unit.trim() || "unit";
+  if (input.stock !== undefined) update.stock = Math.max(0, Math.trunc(input.stock));
+  if (input.brand !== undefined) update.brand = input.brand.trim();
+  if (input.model !== undefined) update.model = input.model.trim();
+  if (input.sku !== undefined) update.sku = input.sku.trim();
+  if (input.specs !== undefined) update.specs = input.specs as unknown as Json;
+  if (input.warranty !== undefined) update.warranty = input.warranty.trim();
+  if (input.status !== undefined) update.status = input.status;
+  if (input.image !== undefined) update.image = input.image || null;
+  if (input.images !== undefined) update.images = input.images;
+  if (input.tags !== undefined) update.tags = input.tags;
+
+  const { error } = await supabase.from("products").update(update).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
+}
+
+export async function deleteProduct(id: string): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const { error } = await supabase.from("products").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
+}
+
+/** Slugs must be unique across the marketplace. */
+function uniqueProductSlug(name: string): string {
+  const base = slugify(name) || "product";
+  if (!products.some((product) => product.slug === base)) return base;
+  return `${base}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/* ------------------------------------------------------------
+   Admin flags (products, orders, customers)
+   ------------------------------------------------------------ */
+
+export type ProductFlags = Record<string, { featured?: boolean; hidden?: boolean }>;
+export type OrderStatusMap = Record<string, CustomerOrderStatus>;
+export type CustomerFlags = Record<string, { blocked?: boolean }>;
+
+/** Featured / hidden are real columns on the products table. */
+export function useProductFlags(): ProductFlags {
+  return useStore(() => {
+    const flags: ProductFlags = {};
+    for (const product of products) flags[product.id] = { featured: product.popular, hidden: product.hidden };
+    return flags;
+  });
+}
+
+/** Administrator: put a product in or take it out of the featured shelf. */
+export async function toggleProductFeatured(id: string): Promise<{ ok: boolean; error?: string }> {
+  const product = productById(id);
+  if (!product) return { ok: false, error: "That product was not found." };
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const { error } = await supabase
+    .from("products")
+    .update({ featured: !product.popular })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
+}
+
+export async function setProductHidden(id: string, hidden: boolean): Promise<{ ok: boolean; error?: string }> {
+  const product = productById(id);
+  if (!product) return { ok: false, error: "That product was not found." };
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const nextStatus: ProductStatus = hidden ? "archived" : "active";
+  const { error } = await supabase
+    .from("products")
+    .update({ hidden, status: nextStatus })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  await loadMarketplace();
+  return { ok: true };
+}
+
+/** The order status is the canonical column — no overrides any more. */
+export function useOrderStatuses(): OrderStatusMap {
+  return useStore(() => {
+    const statuses: OrderStatusMap = {};
+    for (const order of getAllOrders()) statuses[order.id] = order.status;
+    return statuses;
+  });
+}
+
+export async function setOrderStatus(
+  id: string,
+  status: CustomerOrderStatus,
+): Promise<{ ok: boolean; error?: string }> {
+  const result = await updateCustomerOrderStatus(id, status, "Status updated by MedLink admin");
+  if (result.ok) emit();
+  return result;
+}
+
+export function effectiveOrderStatus(order: Order): CustomerOrderStatus {
+  return order.status;
+}
+
+export function useCustomerFlags(): CustomerFlags {
+  return useStore(() => {
+    const flags: CustomerFlags = {};
+    for (const [id, blocked] of Object.entries(blockedAccounts)) flags[id] = { blocked };
+    return flags;
+  });
+}
+
+/** Administrator block flag — the server refuses blocked accounts at checkout. */
+export async function setCustomerBlocked(id: string, blocked: boolean): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: "No backend configured." };
+  const { error } = await supabase.rpc("admin_set_customer_blocked", { target: id, blocked });
+  if (error) return { ok: false, error: error.message };
+  blockedAccounts = { ...blockedAccounts, [id]: blocked };
+  emit();
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------
+   Applications / KYC (admin queue)
+   ------------------------------------------------------------ */
 
 export function useApplications(): SupplierApplication[] {
   return useStore(() => applications);
 }
 
+/** The signed-in store owner's own KYC submission, when one exists. */
+export function useOwnApplication(): SupplierApplication | undefined {
+  return useStore(() => ownApplication);
+}
+
 export function getApplicationById(id: string): SupplierApplication | undefined {
-  return applications.find((a) => a.id === id);
+  return applications.find((application) => application.id === id);
 }
 
 export function getApplicationByRef(ref: string): SupplierApplication | undefined {
   const term = ref.trim().toUpperCase();
-  return applications.find((a) => a.ref.toUpperCase() === term);
+  return applications.find((application) => application.ref.toUpperCase() === term);
 }
 
 /**
- * Create the local projection of a supplier application. `refOverride` lets the
- * caller reuse the reference number issued by the Postgres backend so the admin
- * queue and the server row stay addressable by the same reference.
+ * Approve or reject an application. On approval the server also creates the
+ * supplier store, attaches it to the applicant's account and grants the role.
  */
-export function submitSupplierApplication(
-  input: Omit<SupplierApplication, "id" | "ref" | "status" | "submittedAt">,
-  refOverride?: string,
-): SupplierApplication {
-  const application: SupplierApplication = {
-    ...input,
-    id: `app-${Date.now().toString(36)}`,
-    ref: refOverride?.trim() || nextApplicationRef(),
-    status: "pending",
-    submittedAt: new Date().toISOString(),
-  };
-  applications = [application, ...applications];
-  persistApplications();
-  emit();
-  return application;
-}
+export async function reviewApplication(
+  id: string,
+  status: KycStatus,
+  note?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const application = getApplicationById(id);
+  if (!application) return { ok: false, error: "That application was not found." };
 
-export function reviewApplication(id: string, status: KycStatus, note?: string): void {
-  const now = new Date().toISOString();
-  applications = applications.map((a) =>
-    a.id === id ? { ...a, status, reviewedAt: now, reviewNote: note?.trim() } : a,
+  const result = await reviewSupplierApplicationOnBackend(
+    { ref: application.ref, businessName: application.businessName },
+    status,
+    note,
   );
-  if (status === "approved") {
-    const app = applications.find((a) => a.id === id);
-    if (app) addSupplierFromApplication(app);
+  if (result.status === "error") return { ok: false, error: result.error };
+  if (result.status === "skipped") {
+    return { ok: false, error: "That application is not on the server yet — it cannot be reviewed." };
   }
-  persistApplications();
-  emit();
+  await loadMarketplace();
+  return { ok: true };
 }
 
-/* ---------- product flags (admin) ---------- */
-
-export function useProductFlags(): ProductFlags {
-  return useStore(() => productFlags);
-}
-
-export function toggleProductFeatured(id: string): void {
-  productFlags = { ...productFlags, [id]: { ...productFlags[id], featured: !productFlags[id]?.featured } };
-  emit();
-}
-
-export function setProductHidden(id: string, hidden: boolean): void {
-  productFlags = { ...productFlags, [id]: { ...productFlags[id], hidden } };
-  emit();
-}
-
-/* ---------- order status overrides (admin) ---------- */
-
-export function useOrderStatuses(): OrderStatusMap {
-  return useStore(() => orderStatuses);
-}
-
-export function setOrderStatus(id: string, status: CustomerOrderStatus): void {
-  orderStatuses = { ...orderStatuses, [id]: status };
-  // Write through to the canonical buyer order so the change is persisted and the
-  // buyer timeline records that MedLink moved the fulfilment status.
-  updateCustomerOrderStatus(id, status, "Status updated by MedLink admin");
-  emit();
-}
-
-export function effectiveOrderStatus(order: Order): CustomerOrderStatus {
-  return orderStatuses[order.id] ?? order.status;
-}
-
-/* ---------- customer flags (admin) ---------- */
-
-export function useCustomerFlags(): CustomerFlags {
-  return useStore(() => customerFlags);
-}
-
-export function toggleCustomerBlocked(id: string): void {
-  customerFlags = { ...customerFlags, [id]: { blocked: !customerFlags[id]?.blocked } };
-  emit();
-}
-
-/* ---------- escrow & payouts (admin) ---------- */
-
-function supplierGoods(order: Order, supplierId: string): number {
-  return order.lines
-    .filter((l) => l.supplierId === supplierId)
-    .reduce((sum, l) => sum + l.price * l.quantity, 0);
-}
+/* ------------------------------------------------------------
+   Escrow & payouts (admin)
+   ------------------------------------------------------------ */
 
 export interface SupplierEscrow {
   heldAmount: number;
   orderCount: number;
   orderIds: string[];
   orderNumbers: string[];
-  /** MedLink 10% service fee retained on the held value */
+  /** MedLink service fee retained on the held value */
   serviceFee: number;
 }
 
-/** Buyer funds still held by MedLink for a supplier (non-cancelled, unreleased orders). */
+/** Buyer funds MedLink still holds for a store (unreleased, non-cancelled rows). */
 export function supplierEscrow(supplierId: string, released?: Record<string, string[]>): SupplierEscrow {
   const releasedMap = released ?? releasedOrders;
-  const releasedSet = new Set(releasedMap[supplierId] ?? []);
-  const held = getAllOrders().filter(
-    (order) =>
-      effectiveOrderStatus(order) !== "cancelled" &&
-      !releasedSet.has(order.id) &&
-      order.lines.some((line) => line.supplierId === supplierId),
+  const rows = getAllSupplierOrders().filter((order) => order.supplierId === supplierId);
+  const cancelledOrderIds = new Set(
+    getAllOrders().filter((order) => order.status === "cancelled").map((order) => order.id),
   );
-  const heldAmount = held.reduce((sum, o) => sum + supplierGoods(o, supplierId), 0);
+  const releasedSet = new Set(releasedMap[supplierId] ?? []);
+
+  const held = rows.filter((order) => {
+    if (!order.orderId) return false;
+    if (cancelledOrderIds.has(order.orderId)) return false;
+    return !releasedSet.has(order.orderId);
+  });
+
+  const heldAmount = held.reduce((sum, order) => sum + order.subtotal, 0);
   return {
     heldAmount,
     orderCount: held.length,
-    orderIds: held.map((o) => o.id),
-    orderNumbers: held.map((o) => o.number),
-    serviceFee: Math.round(heldAmount * getPricing().serviceFeeRate),
+    orderIds: held.map((order) => order.orderId ?? ""),
+    orderNumbers: held.map((order) => order.number),
+    serviceFee: Math.round(heldAmount * pricing.serviceFeeRate),
   };
 }
 
-/** Which order ids have been settled (released) per supplier. */
 export function useReleasedOrders(): Record<string, string[]> {
   return useStore(() => releasedOrders);
 }
 
-/** Masked payout destination for display, e.g. "National Bank of Malawi · **4451". */
-export function payoutAccountSummary(account?: SupplierOperatingAccount | undefined): string {
+/** Masked payout destination, e.g. "National Bank of Malawi · **4451". */
+export function payoutAccountSummary(account?: SupplierOperatingAccount): string {
   if (!account) return "No payout account on file";
-  const masked = `**${account.accountNumber.trim().slice(-4)}`;
-  return `${account.bankName} · ${masked}`;
+  return `${account.bankName} · **${account.accountNumber.trim().slice(-4)}`;
 }
 
-/** Release all held buyer funds for a supplier to their operating account. */
-export function releaseSupplierFunds(supplierId: string): PayoutRecord | null {
+/**
+ * Release every held order of a store to its payout account. The server
+ * writes the payout row and the release ledger, so funds can never be
+ * released twice.
+ */
+export async function releaseSupplierFunds(
+  supplierId: string,
+): Promise<{ ok: boolean; record?: PayoutRecord; error?: string }> {
   const escrow = supplierEscrow(supplierId);
-  if (escrow.orderCount === 0 || escrow.heldAmount <= 0) return null;
-  const supplier = suppliers.find((s) => s.id === supplierId);
-  if (!supplier) return null;
+  if (escrow.orderCount === 0 || escrow.heldAmount <= 0) {
+    return { ok: false, error: "There are no held funds to release." };
+  }
+
+  const result = await callReleaseFunds(supplierId);
+  if (!result.released) {
+    return { ok: false, error: result.reason ?? "Nothing was released." };
+  }
+  await loadMarketplace();
 
   const record: PayoutRecord = {
-    id: `pay-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    id: result.payout_id ?? "",
     supplierId,
-    amount: escrow.heldAmount,
-    serviceFee: escrow.serviceFee,
-    orderNumbers: escrow.orderNumbers,
+    amount: result.amount ?? escrow.heldAmount,
+    serviceFee: result.service_fee ?? escrow.serviceFee,
+    orderNumbers: result.order_numbers ?? escrow.orderNumbers,
     releasedAt: new Date().toISOString(),
     method: "Bank transfer",
-    accountSummary: payoutAccountSummary(supplier.operatingAccount),
+    accountSummary: payoutAccountSummary(getSupplierById(supplierId)?.operatingAccount),
   };
-
-  payouts = [record, ...payouts];
-  releasedOrders = {
-    ...releasedOrders,
-    [supplierId]: [...(releasedOrders[supplierId] ?? []), ...escrow.orderIds],
-  };
-  persistPayouts();
-  persistReleasedOrders();
-  emit();
-  return record;
+  return { ok: true, record };
 }
 
 export function usePayouts(): PayoutRecord[] {
   return useStore(() => payouts);
 }
 
-/** Buyer payment attempts (succeeded / failed). Succeeded funds enter escrow. */
 export function usePaymentTransactions(): PaymentTransaction[] {
-  return useStore(() => paymentTransactions);
-}
-
-function persistPaymentTransactions(): void {
-  try {
-    localStorage.setItem(PAYMENT_TRANSACTIONS_KEY, JSON.stringify(paymentTransactions));
-  } catch {
-    /* storage unavailable — keep the in-memory demo working */
-  }
-}
-
-/** Record the safe payment reference already stored on a completed order. */
-export function recordOrderPayment(order: Order): PaymentTransaction {
-  const existing = order.id ? paymentTransactions.find((transaction) => transaction.orderId === order.id) : undefined;
-  if (existing) return existing;
-
-  const serviceFee = order.serviceFee ?? Math.round(order.subtotal * getPricing().serviceFeeRate);
-  const transaction: PaymentTransaction = {
-    id: `paytxn-${order.id}`,
-    orderId: order.id,
-    orderNumber: order.number,
-    customerName: order.customerName,
-    method: order.payment.method,
-    reference: order.payment.reference,
-    amount: order.total,
-    goods: order.subtotal,
-    serviceFee,
-    deliveryFee: order.deliveryFee,
-    status: "succeeded",
-    paidAt: order.placedAt,
-  };
-  paymentTransactions = [transaction, ...paymentTransactions];
-  persistPaymentTransactions();
-  emit();
-  return transaction;
+  return useStore(() => payments);
 }
 
 export function getPaymentTransaction(id: string): PaymentTransaction | undefined {
-  return paymentTransactions.find((t) => t.id === id);
+  return payments.find((payment) => payment.id === id);
 }

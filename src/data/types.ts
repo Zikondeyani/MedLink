@@ -54,6 +54,10 @@ export interface Supplier {
   art: number;
   /** required at registration — where MedLink sends supplier payouts (escrow release) */
   operatingAccount?: SupplierOperatingAccount;
+  /** Cloudinary URL of the store cover image (falls back to the gradient). */
+  bannerImage?: string;
+  /** Cloudinary URL of the store logo (falls back to the initials avatar). */
+  logoImage?: string;
 }
 
 /** A settled escrow release — MedLink released held buyer funds to a supplier's payout account. */
@@ -138,9 +142,15 @@ export interface Product {
   reviewCount: number;
   isNew: boolean;
   popular: boolean;
+  /** Administrator "hidden" flag — pulled from the marketplace without being deleted. */
+  hidden: boolean;
   createdAt: string;
   status: ProductStatus;
   tags: string[];
+  /** Cloudinary URL of the main photo — the product's own folder. */
+  image?: string;
+  /** Every uploaded photo, in the order the supplier added them. */
+  images: string[];
 }
 
 export interface DeliveryAddress {
@@ -272,6 +282,10 @@ export interface ApplicationDocument {
   name: string;
   size: string;
   uploadedAt: string;
+  /** Cloudinary HTTPS URL — the file path stored in the database. */
+  url?: string;
+  /** Cloudinary public id — stable handle for transforms or deletes. */
+  publicId?: string;
 }
 
 export interface SupplierApplication {

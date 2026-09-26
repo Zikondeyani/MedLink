@@ -26,6 +26,7 @@ import {
 import type { Session, User } from "@supabase/supabase-js";
 import type { AccountStatus, ProfileRow } from "./database.types";
 import { isSupabaseConfigured, supabase } from "./supabase";
+import { loadMarketplace, setActiveAccount } from "./registry";
 
 export type UserRole = "customer" | "supplier" | "admin";
 export type { AccountStatus };
@@ -38,6 +39,8 @@ export interface AuthUser {
   role: UserRole;
   /** Suspended accounts are refused a session by signIn(). */
   status: AccountStatus;
+  /** Cloudinary URL of the account's profile photo. */
+  avatarUrl?: string;
   /** Server-derived supplier tenant for an approved supplier account. */
   supplierId?: string;
 }
@@ -117,10 +120,10 @@ export function nameFromEmail(email: string): string {
    Supabase profile mapping
    ============================================================ */
 
-const PROFILE_SELECT = "id, email, full_name, role, status, supplier_id";
+const PROFILE_SELECT = "id, email, full_name, role, status, supplier_id, avatar_url";
 
 /** Shape of the columns the app selects for its own session (see PROFILE_SELECT). */
-type SessionProfileRow = Omit<ProfileRow, "phone" | "updated_at" | "created_at">;
+type SessionProfileRow = Omit<ProfileRow, "phone" | "updated_at" | "created_at" | "blocked">;
 
 function mapProfile(row: SessionProfileRow): AuthUser {
   const user: AuthUser = {
@@ -131,6 +134,7 @@ function mapProfile(row: SessionProfileRow): AuthUser {
     status: row.status,
   };
   if (row.supplier_id) user.supplierId = row.supplier_id;
+  if (row.avatar_url) user.avatarUrl = row.avatar_url;
   return user;
 }
 
@@ -406,6 +410,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
     setLoading(false);
   }, []);
+
+  // The marketplace cache is filled for whoever is signed in: on first paint,
+  // on sign-in and on sign-out, so every page reads real rows for the right
+  // role and RLS scopes each of them.
+  useEffect(() => {
+    setActiveAccount(
+      user
+        ? {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            ...(user.supplierId ? { supplierId: user.supplierId } : {}),
+          }
+        : null,
+    );
+    void loadMarketplace();
+  }, [user]);
 
   useEffect(() => {
     const client = supabase;

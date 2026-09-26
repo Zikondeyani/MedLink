@@ -3,6 +3,7 @@ import CustomerLayout from "./components/layout/CustomerLayout";
 import SupplierLayout from "./components/layout/SupplierLayout";
 import AdminLayout from "./components/layout/AdminLayout";
 import RequireRole from "./components/auth/RequireRole";
+import DataGate from "./components/ui/DataGate";
 import HomePage from "./pages/HomePage";
 import ProductsPage from "./pages/ProductsPage";
 import ProductDetailsPage from "./pages/ProductDetailsPage";
@@ -58,7 +59,8 @@ function NotFound() {
 
 export default function App() {
   return (
-    <Routes>
+    <DataGate>
+      <Routes>
       {/* ----- Customer marketplace ----- */}
       <Route element={<CustomerLayout />}>
         <Route path="/" element={<HomePage />} />
@@ -114,6 +116,7 @@ export default function App() {
         <Route path="settings" element={<SupplierSettingsPage />} />
         <Route path="notifications" element={<NotificationsPage />} />
       </Route>
-    </Routes>
+      </Routes>
+    </DataGate>
   );
 }

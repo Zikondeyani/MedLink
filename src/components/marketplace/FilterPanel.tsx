@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
 import { SlidersHorizontal, X } from "lucide-react";
-import { categories } from "../../data/categories";
-import { suppliers } from "../../data/suppliers";
-import { activeProducts } from "../../data/products";
+import {
+  getSuppliers,
+  useActiveProducts,
+  useCategories,
+  useSuppliers,
+} from "../../lib/registry";
 import type { Product } from "../../data/types";
 import { mwk } from "../../lib/format";
 
@@ -34,7 +37,7 @@ export function applyFilters(list: Product[], f: ProductFilters): Product[] {
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.tags.some((t) => t.includes(q)) ||
-        (suppliers.find((s) => s.id === p.supplierId)?.name.toLowerCase().includes(q) ?? false) ||
+        (getSuppliers().find((s) => s.id === p.supplierId)?.name.toLowerCase().includes(q) ?? false) ||
         p.brand.toLowerCase().includes(q),
     );
   }
@@ -79,7 +82,10 @@ export default function FilterPanel({
   const [open, setOpen] = useState(false);
   const maxSupplierCount = 5000000;
 
-  const availableCount = useMemo(() => activeProducts.length, []);
+  const categories = useCategories();
+  const suppliers = useSuppliers();
+  const activeProducts = useActiveProducts();
+  const availableCount = useMemo(() => activeProducts.length, [activeProducts]);
 
   const set = (patch: Partial<ProductFilters>) => onChange({ ...filters, ...patch });
 

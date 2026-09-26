@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { ChevronRight, Package } from "lucide-react";
 import { Link } from "react-router-dom";
-import { customerOrders } from "../data/orders";
+import { useCustomerOrders } from "../lib/customerData";
+import { useAuth } from "../lib/auth";
 import { shortDate, mwk } from "../lib/format";
 import { CustomerOrderStatusBadge } from "../components/marketplace/OrderStatus";
 import EmptyState from "../components/ui/EmptyState";
@@ -9,13 +10,15 @@ import EmptyState from "../components/ui/EmptyState";
 type Tab = "all" | "active" | "delivered";
 
 export default function OrdersPage() {
+  const { user } = useAuth();
+  const customerOrders = useCustomerOrders(user?.email ?? "");
   const [tab, setTab] = useState<Tab>("all");
 
   const filtered = useMemo(() => {
     if (tab === "active") return customerOrders.filter((o) => o.status !== "delivered" && o.status !== "cancelled");
     if (tab === "delivered") return customerOrders.filter((o) => o.status === "delivered");
     return customerOrders;
-  }, [tab]);
+  }, [tab, customerOrders]);
 
   return (
     <div className="page orders-page container">

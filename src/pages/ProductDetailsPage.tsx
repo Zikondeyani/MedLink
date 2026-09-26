@@ -9,9 +9,9 @@ import {
   Zap,
 } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { categoryById, categoryName } from "../data/categories";
-import { activeProducts, productBySlug } from "../data/products";
-import { supplierById } from "../data/suppliers";
+import { getCategoryById, categoryName } from "../lib/registry";
+import { productBySlug, useActiveProducts } from "../lib/registry";
+import { getSupplierById } from "../lib/registry";
 import { useAuth } from "../lib/auth";
 import { useCart } from "../lib/cart";
 import { useToast } from "../lib/toast";
@@ -36,13 +36,14 @@ export default function ProductDetailsPage() {
   const { has, toggle } = useWishlist();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const activeProducts = useActiveProducts();
 
   const related = useMemo(() => {
     if (!product) return [];
     return activeProducts
       .filter((p) => p.categoryId === product.categoryId && p.id !== product.id)
       .slice(0, 4);
-  }, [product]);
+  }, [product, activeProducts]);
 
   if (!product) {
     return (
@@ -54,7 +55,7 @@ export default function ProductDetailsPage() {
     );
   }
 
-  const supplier = supplierById(product.supplierId);
+  const supplier = getSupplierById(product.supplierId);
   const wished = has(product.id);
   const galleryIcons = ["activity", "shield", "stethoscope"];
 
@@ -72,7 +73,7 @@ export default function ProductDetailsPage() {
         <ChevronRight size={13} />
         <Link to="/products">Products</Link>
         <ChevronRight size={13} />
-        <Link to={`/categories/${categoryById(product.categoryId)?.slug ?? ""}`}>
+        <Link to={`/categories/${getCategoryById(product.categoryId)?.slug ?? ""}`}>
           {categoryName(product.categoryId)}
         </Link>
       </nav>

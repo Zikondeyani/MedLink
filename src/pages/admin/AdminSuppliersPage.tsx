@@ -24,6 +24,20 @@ export default function AdminSuppliersPage() {
   const live = suppliers.filter((s) => !s.suspended).length;
   const suspended = suppliers.length - live;
 
+  /* Every action is a real write; a rejected change says so instead of
+     toasting a success the database never accepted. */
+  async function run(
+    work: Promise<{ ok: boolean; error?: string }>,
+    success: { title: string; message: string; icon: "success" | "info" | "error" },
+  ): Promise<void> {
+    const result = await work;
+    push(
+      result.ok
+        ? success
+        : { title: "Not changed", message: result.error ?? "The server rejected the change.", icon: "error" },
+    );
+  }
+
   const columns: Column<(typeof rows)[number]>[] = [
     {
       key: "supplier",
@@ -73,37 +87,38 @@ export default function AdminSuppliersPage() {
           <button
             className="btn btn-outline btn-sm"
             style={{ color: s.suspended ? "var(--green)" : "var(--red)", borderColor: "currentColor", fontWeight: 600 }}
-            onClick={() => {
-              setSupplierSuspended(s.id, !s.suspended);
-              push({
+            onClick={() =>
+              void run(setSupplierSuspended(s.id, !s.suspended), {
                 title: s.suspended ? "Supplier reinstated" : "Supplier suspended",
                 message: `${s.name} is now ${s.suspended ? "visible on the marketplace" : "hidden from the marketplace"}.`,
                 icon: "info",
-              });
-            }}
+              })
+            }
           >
             <ShieldOff size={13} /> {s.suspended ? "Reinstate" : "Suspend"}
           </button>
           <button
             className="btn btn-outline btn-sm"
-            onClick={() => {
-              toggleSupplierVerified(s.id);
-              push({
+            onClick={() =>
+              void run(toggleSupplierVerified(s.id), {
                 title: s.verified ? "Verification removed" : "Supplier verified",
                 message: `${s.name} ${s.verified ? "is no longer" : "is now"} verified.`,
                 icon: "success",
-              });
-            }}
+              })
+            }
           >
             <ShieldCheck size={13} /> {s.verified ? "Unverify" : "Verify"}
           </button>
           <button
             className="btn btn-outline btn-sm"
             style={{ color: "var(--red)", borderColor: "currentColor", fontWeight: 600 }}
-            onClick={() => {
-              removeSupplier(s.id);
-              push({ title: "Supplier removed", message: `${s.name} was removed from the marketplace.`, icon: "error" });
-            }}
+            onClick={() =>
+              void run(removeSupplier(s.id), {
+                title: "Supplier removed",
+                message: `${s.name} was removed from the marketplace.`,
+                icon: "error",
+              })
+            }
           >
             <Trash2 size={13} /> Remove
           </button>
@@ -133,7 +148,12 @@ export default function AdminSuppliersPage() {
       </div>
 
       <div className="card card-pad">
-        <DataTable columns={columns} rows={rows} minWidth={740} />
+        <DataTable
+        columns={columns}
+        rows={rows}
+        minWidth={740}
+        empty={term ? "No stores match that search." : "No supplier stores yet."}
+      />
       </div>
     </div>
   );

@@ -390,6 +390,49 @@
   color: var(--navy);
 }
 
+/* Uploaded previews + remove control inside an image tile */
+.upload-grid label.upload-tile {
+  cursor: pointer;
+}
+.upload-tile.filled {
+  position: relative;
+  overflow: hidden;
+  border-style: solid;
+  padding: 0;
+}
+.upload-tile img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.upload-tile-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(11, 17, 32, 0.72);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.16s var(--ease);
+}
+.upload-tile-remove:hover {
+  background: var(--red, #e11d48);
+}
+.upload-tile-name {
+  padding: 0 8px;
+  text-align: center;
+  word-break: break-word;
+  color: var(--muted);
+}
+
 /* ---------- Spec editor ---------- */
 .spec-editor {
   display: grid;

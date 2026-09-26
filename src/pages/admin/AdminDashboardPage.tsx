@@ -1,11 +1,7 @@
 import { ClipboardList, Package, ShieldCheck, ShoppingBag, Store, Tags, Users, CheckCircle2, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
-import { customerOrders } from "../../data/orders";
-import { activeProducts } from "../../data/products";
-import { monthlySales, categorySales } from "../../data/sales";
-import { supplierCustomers } from "../../data/orders";
-import { useApplications, useSuppliers, reviewApplication, useCategories } from "../../lib/registry";
-import { reviewSupplierApplicationOnBackend } from "../../lib/onboarding";
+import { useAllOrdersSorted, useCategorySales, useMonthlySales, usePlatformSummary } from "../../lib/analytics";
+import { useActiveProducts, useApplications, useCategories, reviewApplication, useSuppliers } from "../../lib/registry";
 import { mwk, mwkCompact, shortDate } from "../../lib/format";
 import DashboardCard from "../../components/ui/DashboardCard";
 import { LineChart, BarChart } from "../../components/charts/Charts";
@@ -18,12 +14,17 @@ export default function AdminDashboardPage() {
   const suppliers = useSuppliers();
   const applications = useApplications();
   const categories = useCategories();
+  const activeProducts = useActiveProducts();
+  const customerOrders = useAllOrdersSorted();
+  const summary = usePlatformSummary();
+  const monthlySales = useMonthlySales();
+  const categorySales = useCategorySales();
   const { push } = useToast();
 
   /**
-   * Mirror a KYC decision onto the Postgres backend (supplier role grant and
-   * tenant attach on approval) before applying it to the local registry.
-   * Applications that only exist locally skip the backend call.
+   * Apply a KYC decision. The database does the work — decision row, note and,
+   * on approval, the supplier role grant and tenant attach — then the queue is
+   * re-read so what is on screen is what was stored.
    */
   async function reviewOnBackend(
     a: { id: string; ref: string; businessName: string },
@@ -31,12 +32,11 @@ export default function AdminDashboardPage() {
     reason?: string,
   ): Promise<void> {
     try {
-      const result = await reviewSupplierApplicationOnBackend(a, decision, reason);
-      reviewApplication(a.id, decision, reason);
-      if (result.status === "error") {
+      const result = await reviewApplication(a.id, decision, reason);
+      if (!result.ok) {
         push({
-          title: decision === "approved" ? "Approved in this browser only" : "Rejected in this browser only",
-          message: `The MedLink server could not be updated: ${result.error}`,
+          title: "Decision not stored",
+          message: result.error ?? "The MedLink server rejected the review.",
           icon: "error",
         });
         return;
@@ -55,8 +55,6 @@ export default function AdminDashboardPage() {
   }
 
   const pending = applications.filter((a) => a.status === "pending");
-  const gmv = customerOrders.reduce((sum, o) => sum + o.total, 0);
-
   const recentOrders = customerOrders.slice(0, 5);
 
   const columns: Column<(typeof recentOrders)[number]>[] = [
@@ -99,11 +97,11 @@ export default function AdminDashboardPage() {
       </div>
 
       <div className="grid grid-4 dash-grid">
-        <DashboardCard icon={<ShoppingBag size={19} />} label="Gross sales (GMV)" value={mwkCompact(gmv)} trend={18.2} sub="All orders" tone="amber" />
-        <DashboardCard icon={<ClipboardList size={19} />} label="Orders" value={String(customerOrders.length)} trend={9.6} sub="Marketplace orders" tone="teal" />
-        <DashboardCard icon={<Store size={19} />} label="Suppliers" value={String(suppliers.length)} sub={`${suppliers.length - suppliers.filter((s) => s.suspended).length} live`} tone="navy" />
+        <DashboardCard icon={<ShoppingBag size={19} />} label="Gross sales (GMV)" value={mwkCompact(summary.revenue)} sub="All live orders" tone="amber" />
+        <DashboardCard icon={<ClipboardList size={19} />} label="Orders" value={String(summary.orders)} sub="Marketplace orders" tone="teal" />
+        <DashboardCard icon={<Store size={19} />} label="Suppliers" value={String(summary.suppliers)} sub={`${suppliers.length - suppliers.filter((s) => s.suspended).length} live`} tone="navy" />
         <DashboardCard icon={<Package size={19} />} label="Active products" value={String(activeProducts.length)} sub="Across all stores" tone="green" />
-        <DashboardCard icon={<Users size={19} />} label="Customers" value={String(supplierCustomers.length + customerOrders.length)} sub="Facilities & buyers" tone="teal" />
+        <DashboardCard icon={<Users size={19} />} label="Customers" value={String(summary.customers)} sub="Ordered at least once" tone="teal" />
         <DashboardCard icon={<ShieldCheck size={19} />} label="Pending KYC" value={String(pending.length)} sub="Awaiting review" tone="amber" />
         <DashboardCard icon={<Tags size={19} />} label="Categories" value={String(categories.length)} sub="Managed in admin" tone="navy" />
       </div>
@@ -137,7 +135,12 @@ export default function AdminDashboardPage() {
           </div>
           <Link to="/admin/orders" className="btn btn-outline btn-sm">All orders</Link>
         </div>
-        <DataTable columns={columns} rows={recentOrders} minWidth={680} />
+        <DataTable
+          columns={columns}
+          rows={recentOrders}
+          minWidth={680}
+          empty="No orders have been placed on MedLink yet."
+        />
       </div>
 
       {pending.length > 0 && (

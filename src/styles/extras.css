@@ -951,3 +951,66 @@
 .auth-simple form .btn {
   margin-top: 2px;
 }
+
+/* ------------------------------------------------------------
+   FileUploader — one upload control for every file in the app.
+   The bytes go to the uploader's own Cloudinary folder; this is
+   only the picker, the preview and the error line.
+   ------------------------------------------------------------ */
+.uploader {
+  display: grid;
+  gap: 10px;
+}
+.uploader-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.uploader-text {
+  min-width: 0;
+  flex: 1;
+}
+.uploader-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.uploader-hint {
+  font-size: 0.72rem;
+  color: var(--muted, #8b95a7);
+  overflow-wrap: anywhere;
+}
+.uploader-error {
+  font-size: 0.75rem;
+  color: #f87171;
+}
+.uploader-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: 0 0 auto;
+  background: linear-gradient(135deg, #0b1120, #ffb74d);
+}
+.uploader-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.uploader-preview {
+  width: 100%;
+  max-height: 190px;
+  object-fit: cover;
+  border-radius: 12px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

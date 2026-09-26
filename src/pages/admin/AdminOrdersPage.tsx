@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { customerOrders } from "../../data/orders";
+import { useOrders } from "../../lib/customerData";
 import { useOrderStatuses, setOrderStatus } from "../../lib/registry";
+import { useToast } from "../../lib/toast";
 import { mwk, shortDate } from "../../lib/format";
 import DataTable from "../../components/ui/DataTable";
 import type { Column } from "../../components/ui/DataTable";
@@ -18,8 +19,20 @@ const statusOptions: CustomerOrderStatus[] = [
 ];
 
 export default function AdminOrdersPage() {
+  const customerOrders = useOrders();
   const overrides = useOrderStatuses();
+  const { push } = useToast();
   const [filter, setFilter] = useState<CustomerOrderStatus | "all">("all");
+
+  /** The server owns the status; a rejected change says so and the row keeps its stored value. */
+  async function changeStatus(id: string, number: string, status: CustomerOrderStatus): Promise<void> {
+    const result = await setOrderStatus(id, status);
+    push(
+      result.ok
+        ? { title: "Status updated", message: `${number} is now ${status.replace(/_/g, " ")}.`, icon: "success" }
+        : { title: "Status not changed", message: result.error ?? "The server rejected the change.", icon: "error" },
+    );
+  }
 
   const rows = customerOrders.map((o) => ({
     ...o,
@@ -82,9 +95,7 @@ export default function AdminOrdersPage() {
             className="select select-sm"
             value={o.status}
             aria-label={`Change status for ${o.number}`}
-            onChange={(e) => {
-              setOrderStatus(o.id, e.target.value as CustomerOrderStatus);
-            }}
+            onChange={(e) => void changeStatus(o.id, o.number, e.target.value as CustomerOrderStatus)}
           >
             {statusOptions.map((s) => (
               <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
@@ -123,7 +134,7 @@ export default function AdminOrdersPage() {
       </div>
 
       <div className="card card-pad">
-        <DataTable columns={columns} rows={visible} minWidth={800} />
+        <DataTable columns={columns} rows={visible} minWidth={800} empty="No orders in the marketplace yet." />
       </div>
     </div>
   );

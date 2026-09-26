@@ -18,6 +18,7 @@ import {
   type AuthUser,
   type UserRole,
 } from "./auth";
+import { useSyncExternalStore } from "react";
 import type { ProfileRow } from "./database.types";
 import { supabase } from "./supabase";
 
@@ -27,6 +28,10 @@ export interface AccountRecord {
   email: string;
   role: UserRole;
   status: AccountStatus;
+  /** Administrator block flag for customer accounts. */
+  blocked: boolean;
+  /** Cloudinary URL of the account's profile photo. */
+  avatarUrl?: string;
   /** Marketplace tenant for an approved supplier account. */
   supplierId?: string;
   /** ISO timestamp, when the backend reports one. */
@@ -37,7 +42,7 @@ export type AccountMutationResult =
   | { ok: true; account: AccountRecord }
   | { ok: false; error: string };
 
-const PROFILE_SELECT = "id, email, full_name, role, status, supplier_id, created_at";
+const PROFILE_SELECT = "id, email, full_name, role, status, supplier_id, avatar_url, blocked, created_at";
 
 /** Shape of the columns the admin console selects (see PROFILE_SELECT). */
 type AdminProfileRow = Omit<ProfileRow, "phone" | "updated_at">;
@@ -49,9 +54,11 @@ function mapRow(row: AdminProfileRow): AccountRecord {
     email: row.email.trim().toLowerCase(),
     role: row.role,
     status: row.status,
+    blocked: row.blocked,
     createdAt: row.created_at,
   };
   if (row.supplier_id) account.supplierId = row.supplier_id;
+  if (row.avatar_url) account.avatarUrl = row.avatar_url;
   return account;
 }
 
@@ -65,6 +72,7 @@ export async function listAccounts(): Promise<AccountRecord[]> {
         email: a.email,
         role: a.role,
         status: a.status,
+        blocked: false,
       };
       if (a.supplierId) account.supplierId = a.supplierId;
       return account;
@@ -78,6 +86,67 @@ export async function listAccounts(): Promise<AccountRecord[]> {
 
   if (error) throw new Error(error.message);
   return (data ?? []).map(mapRow);
+}
+
+/* ------------------------------------------------------------
+   Shared cache — several admin screens need the same list
+   ------------------------------------------------------------ */
+
+type Listener = () => void;
+const listeners = new Set<Listener>();
+
+let cached: AccountRecord[] = [];
+let cacheLoaded = false;
+let cacheLoading = false;
+let cacheError: string | null = null;
+
+function emit(): void {
+  for (const listener of listeners) listener();
+}
+
+/** Re-read the account list into the shared cache. */
+export async function refreshAccounts(force = false): Promise<void> {
+  if (cacheLoading) return;
+  if (cacheLoaded && !force) return;
+  cacheLoading = true;
+  emit();
+  try {
+    cached = await listAccounts();
+    cacheLoaded = true;
+    cacheError = null;
+  } catch (error) {
+    cacheError = error instanceof Error ? error.message : "Could not load accounts.";
+  } finally {
+    cacheLoading = false;
+    emit();
+  }
+}
+
+export interface AccountsState {
+  accounts: AccountRecord[];
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+}
+
+/** The account list as a hook, loaded on first use and shared by all callers. */
+export function useAccounts(): AccountsState {
+  const snapshot = useSyncExternalStore(
+    (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    () => ({ loading: cacheLoading, loaded: cacheLoaded, error: cacheError }),
+    () => ({ loading: cacheLoading, loaded: cacheLoaded, error: cacheError }),
+  );
+  return { accounts: cached, ...snapshot, refresh: () => refreshAccounts(true) };
+}
+
+/** Point one cached record at its updated self (after a role or status change). */
+function replaceCachedAccount(next: AccountRecord): void {
+  cached = cached.map((account) => (account.id === next.id ? next : account));
+  emit();
 }
 
 /**
@@ -115,14 +184,18 @@ export async function setAccountRole(
     if (blocked) return { ok: false, error: blocked };
     const updated = updateLocalAccount(target.id, { role, supplierId: role === "customer" ? undefined : target.supplierId });
     if (!updated) return { ok: false, error: "Account not found." };
-    return { ok: true, account: { ...target, role } };
+    const account = { ...target, role };
+    replaceCachedAccount(account);
+    return { ok: true, account };
   }
 
   const { data, error } = await supabase.rpc("admin_set_account_role", { target: target.id, new_role: role });
   if (error || !data) {
     return { ok: false, error: error?.message ?? "Could not change that account's role." };
   }
-  return { ok: true, account: mapRow(data) };
+  const account = mapRow(data);
+  replaceCachedAccount(account);
+  return { ok: true, account };
 }
 
 /** Suspend (block sign-in for) or reactivate an account. */
@@ -136,12 +209,16 @@ export async function setAccountStatus(
     if (blocked) return { ok: false, error: blocked };
     const updated = updateLocalAccount(target.id, { status });
     if (!updated) return { ok: false, error: "Account not found." };
-    return { ok: true, account: { ...target, status } };
+    const account = { ...target, status };
+    replaceCachedAccount(account);
+    return { ok: true, account };
   }
 
   const { data, error } = await supabase.rpc("admin_set_account_status", { target: target.id, new_status: status });
   if (error || !data) {
     return { ok: false, error: error?.message ?? "Could not change that account's status." };
   }
-  return { ok: true, account: mapRow(data) };
+  const account = mapRow(data);
+  replaceCachedAccount(account);
+  return { ok: true, account };
 }

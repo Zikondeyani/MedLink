@@ -1,9 +1,7 @@
 import { useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { currentSupplierId } from "../../data/suppliers";
-import { categoryById } from "../../data/categories";
-import { productById, productsBySupplier } from "../../data/products";
+import { getCategoryById, deleteProduct, productById, productsBySupplier, updateProduct, useCurrentSupplierId } from "../../lib/registry";
 import { mwk } from "../../lib/format";
 import { useToast } from "../../lib/toast";
 import DataTable from "../../components/ui/DataTable";
@@ -12,10 +10,12 @@ import Modal from "../../components/ui/Modal";
 import ProductImage from "../../components/ui/ProductImage";
 
 export default function SupplierProductsPage() {
-  const storeProducts = productsBySupplier(currentSupplierId);
+  const supplierId = useCurrentSupplierId();
+  // The list is the database's, refreshed after every write — no local copy.
+  const cutList = supplierId ? productsBySupplier(supplierId) : [];
   const { push } = useToast();
   const [stockModal, setStockModal] = useState<string | null>(null);
-  const [cutList, setCutList] = useState(storeProducts);
+  const [saving, setSaving] = useState(false);
 
   const stockProduct = stockModal ? productById(stockModal) : null;
   const [stockVal, setStockVal] = useState("10");
@@ -25,24 +25,38 @@ export default function SupplierProductsPage() {
     setStockModal(id);
   };
 
-  const saveStock = () => {
+  async function saveStock(): Promise<void> {
     if (!stockModal) return;
+    const quantity = Number(stockVal);
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      push({ title: "Check the quantity", message: "Enter a whole stock count of 0 or more.", icon: "error" });
+      return;
+    }
+
+    setSaving(true);
+    const result = await updateProduct(stockModal, { stock: quantity });
+    setSaving(false);
+    if (!result.ok) {
+      push({ title: "Stock not updated", message: result.error ?? "The server rejected the change.", icon: "error" });
+      return;
+    }
     push({
       title: "Stock updated",
-      message: `${productById(stockModal)?.name} is now at ${stockVal} in stock.`,
+      message: `${stockProduct?.name ?? "Product"} is now at ${quantity} in stock.`,
       icon: "success",
     });
-    setCutList((prev) =>
-      prev.map((p) => (p.id === stockModal ? { ...p, stock: Number(stockVal) } : p)),
-    );
     setStockModal(null);
-  };
+  }
 
-  const deleteProduct = (id: string) => {
+  async function remove(id: string): Promise<void> {
     const p = productById(id);
+    const result = await deleteProduct(id);
+    if (!result.ok) {
+      push({ title: "Not removed", message: result.error ?? "The server rejected the change.", icon: "error" });
+      return;
+    }
     push({ title: "Product removed", message: `${p?.name ?? "Product"} was removed from your store.`, icon: "info" });
-    setCutList((prev) => prev.filter((x) => x.id !== id));
-  };
+  }
 
   const columns: Column<(typeof cutList)[number]>[] = [
     {
@@ -61,7 +75,7 @@ export default function SupplierProductsPage() {
     {
       key: "category",
       header: "Category",
-      render: (p) => <span className="badge badge-soft">{categoryById(p.categoryId)?.name ?? "—"}</span>,
+      render: (p) => <span className="badge badge-soft">{getCategoryById(p.categoryId)?.name ?? "—"}</span>,
     },
     { key: "price", header: "Price", render: (p) => <b>{mwk(p.price)}</b>, align: "right" },
     {
@@ -87,7 +101,7 @@ export default function SupplierProductsPage() {
           <Link to={`/supplier/products/${p.id}/edit`} className="btn btn-outline btn-sm" aria-label="Edit product">
             <Pencil size={13} /> Edit
           </Link>
-          <button className="btn btn-danger btn-sm" onClick={() => deleteProduct(p.id)} aria-label="Delete product">
+          <button className="btn btn-danger btn-sm" onClick={() => void remove(p.id)} aria-label="Delete product">
             <Trash2 size={13} />
           </button>
         </div>
@@ -108,7 +122,12 @@ export default function SupplierProductsPage() {
         </Link>
       </div>
 
-      <DataTable columns={columns} rows={cutList} minWidth={740} />
+      <DataTable
+        columns={columns}
+        rows={cutList}
+        minWidth={740}
+        empty="No products in your store yet. Add your first product to start selling."
+      />
 
       <Modal
         open={stockModal !== null}
@@ -117,7 +136,9 @@ export default function SupplierProductsPage() {
         footer={
           <>
             <button className="btn btn-ghost" onClick={() => setStockModal(null)}>Cancel</button>
-            <button className="btn btn-primary" onClick={saveStock}>Update stock</button>
+            <button className="btn btn-primary" onClick={() => void saveStock()} disabled={saving}>
+              {saving ? <Loader2 size={15} className="spin" /> : null} Update stock
+            </button>
           </>
         }
       >

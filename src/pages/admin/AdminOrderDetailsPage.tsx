@@ -8,13 +8,14 @@ import {
   Wallet,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
-import { customerOrders } from "../../data/orders";
+import { useOrders } from "../../lib/customerData";
 import type { CustomerOrderStatus } from "../../data/types";
 import { CustomerOrderStatusBadge } from "../../components/marketplace/OrderStatus";
 import OrderTimeline from "../../components/marketplace/OrderTimeline";
 import EmptyState from "../../components/ui/EmptyState";
 import { mwk, prettyDate } from "../../lib/format";
 import { setOrderStatus, useOrderStatuses } from "../../lib/registry";
+import { useToast } from "../../lib/toast";
 
 const statusOptions: CustomerOrderStatus[] = [
   "confirmed",
@@ -27,8 +28,21 @@ const statusOptions: CustomerOrderStatus[] = [
 
 export default function AdminOrderDetailsPage() {
   const { id } = useParams<{ id: string }>();
+  const customerOrders = useOrders();
   const overrides = useOrderStatuses();
+  const { push } = useToast();
   const order = customerOrders.find((candidate) => candidate.id === id);
+
+  /** The server owns the status; a rejected change says so and the row keeps its stored value. */
+  async function changeStatus(status: CustomerOrderStatus): Promise<void> {
+    if (!order) return;
+    const result = await setOrderStatus(order.id, status);
+    push(
+      result.ok
+        ? { title: "Status updated", message: `${order.number} is now ${status.replace(/_/g, " ")}.`, icon: "success" }
+        : { title: "Status not changed", message: result.error ?? "The server rejected the change.", icon: "error" },
+    );
+  }
 
   if (!order) {
     return (
@@ -64,7 +78,7 @@ export default function AdminOrderDetailsPage() {
               className="select select-sm"
               value={status}
               aria-label={`Change status for ${order.number}`}
-              onChange={(event) => setOrderStatus(order.id, event.target.value as CustomerOrderStatus)}
+              onChange={(event) => void changeStatus(event.target.value as CustomerOrderStatus)}
             >
               {statusOptions.map((option) => (
                 <option key={option} value={option}>{option.replace(/_/g, " ")}</option>

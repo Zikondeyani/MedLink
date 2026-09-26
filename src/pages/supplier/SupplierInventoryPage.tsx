@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, Package } from "lucide-react";
 import { Link } from "react-router-dom";
-import { currentSupplierId } from "../../data/suppliers";
-import { productsBySupplier } from "../../data/products";
+import { productsBySupplier, useCurrentSupplierId, useProducts } from "../../lib/registry";
 import { mwk } from "../../lib/format";
 import DataTable from "../../components/ui/DataTable";
 import type { Column } from "../../components/ui/DataTable";
@@ -10,7 +9,10 @@ import ProductImage from "../../components/ui/ProductImage";
 import type { Product } from "../../data/types";
 
 export default function SupplierInventoryPage() {
-  const storeProducts = productsBySupplier(currentSupplierId);
+  const supplierId = useCurrentSupplierId();
+  const products = useProducts();
+  // Memoised so the derived rows below only recompute when the store changes.
+  const storeProducts = useMemo(() => (supplierId ? productsBySupplier(supplierId) : []), [supplierId, products]);
   const [filter, setFilter] = useState<"all" | "low" | "out">("all");
   const [q, setQ] = useState("");
 
@@ -118,7 +120,16 @@ export default function SupplierInventoryPage() {
         />
       </div>
 
-      <DataTable columns={columns} rows={rows} minWidth={740} />
+      <DataTable
+        columns={columns}
+        rows={rows}
+        minWidth={740}
+        empty={
+          filter !== "all" || q.trim()
+            ? "No products match this view."
+            : "Your store has no products yet."
+        }
+      />
     </div>
   );
 }

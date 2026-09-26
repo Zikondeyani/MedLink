@@ -16,13 +16,18 @@ import {
   Wallet,
 } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { savedAddresses } from "../data/orders";
-import { activeProducts } from "../data/products";
+import { useState } from "react";
+import { useCustomerAddresses } from "../lib/customerData";
+import { useActiveProducts } from "../lib/registry";
 import { roleLabel, useAuth } from "../lib/auth";
 import { useWishlist } from "../lib/wishlist";
 import { useNotifications } from "../lib/notifications";
 import EmptyState from "../components/ui/EmptyState";
 import ProductCard from "../components/marketplace/ProductCard";
+import FileUploader from "../components/ui/FileUploader";
+import { describeOwnerFolder, useUploadOwner } from "../lib/cloudinary";
+import { supabase } from "../lib/supabase";
+import { useToast } from "../lib/toast";
 import type { NotificationItem } from "../data/types";
 
 type SectionId = "saved" | "addresses" | "profile" | "settings" | "notifications";
@@ -56,14 +61,20 @@ const NOTIF_ICONS: Record<NotificationItem["icon"], typeof Info> = {
 export default function AccountPage() {
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user, signOut, refresh } = useAuth();
   const { ids } = useWishlist();
   const { items, markRead, markAllRead } = useNotifications();
+  const { push } = useToast();
+  // Every file this account uploads is written to this owner's folder.
+  const owner = useUploadOwner();
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(user?.avatarUrl ?? null);
 
+  const activeProducts = useActiveProducts();
+  const savedAddresses = useCustomerAddresses(user?.email ?? "");
   const active = SECTIONS.find((s) => s.id === tab);
   const savedProducts = useMemo(
     () => ids.map((id) => activeProducts.find((p) => p.id === id)).filter((p): p is NonNullable<typeof p> => Boolean(p)),
-    [ids],
+    [ids, activeProducts],
   );
 
   // The route is guarded in App, but keep this page safe if it is rendered
@@ -113,7 +124,7 @@ export default function AccountPage() {
         {active.id === "addresses" && (
           <div className="grid grid-2 addr-grid">
             {savedAddresses.map((a) => (
-              <div key={a.label} className="card card-pad">
+              <div key={a.id} className="card card-pad">
                 <div className="between">
                   <span className="badge badge-soft">{a.label}</span>
                   {a.isDefault && <span className="badge badge-green">Default</span>}
@@ -139,7 +150,33 @@ export default function AccountPage() {
         {active.id === "profile" && (
           <div className="card card-pad">
             <h2 className="h-card" style={{ marginBottom: 16 }}>Profile</h2>
-            <div className="form-grid">
+            <FileUploader
+              purpose="profile"
+              owner={owner}
+              accept="image/png,image/jpeg,image/webp"
+              label="Profile photo"
+              round
+              value={avatarUrl}
+              hint={`Saved to ${describeOwnerFolder(owner, "profile")}`}
+              maxBytes={5 * 1_048_576}
+              onUploaded={async (file) => {
+                const next = file.url;
+                setAvatarUrl(next);
+                if (!supabase) {
+                  push({ title: "Profile photo", message: "Saved for this session only — no backend configured.", icon: "info" });
+                  return;
+                }
+                // Only the URL is stored; the bytes live in the owner's Cloudinary folder.
+                const { error } = await supabase.from("profiles").update({ avatar_url: next }).eq("id", user.id);
+                if (error) {
+                  push({ title: "Could not save the photo", message: error.message, icon: "error" });
+                  return;
+                }
+                await refresh();
+                push({ title: "Profile photo updated", message: `Stored in ${file.folder}`, icon: "success" });
+              }}
+            />
+            <div className="form-grid" style={{ marginTop: 20 }}>
               <div className="field">
                 <label className="label" htmlFor="pname">Full name</label>
                 <input id="pname" className="input" defaultValue={user.name} />

@@ -9,7 +9,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
-import { customerOrders } from "../../data/orders";
+import { useOrders } from "../../lib/customerData";
 import {
   getPaymentTransaction,
   getPricing,
@@ -29,6 +29,7 @@ type DistributionRow = {
 
 export default function AdminTransactionDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const customerOrders = useOrders();
   const suppliers = useSuppliers();
   const released = useReleasedOrders();
   const txn = id ? getPaymentTransaction(id) : undefined;
@@ -237,7 +238,12 @@ export default function AdminTransactionDetailPage() {
             </div>
             <Landmark size={17} className="muted" />
           </div>
-          <DataTable columns={distributionColumns} rows={distribution} minWidth={640} />
+          <DataTable
+          columns={distributionColumns}
+          rows={distribution}
+          minWidth={640}
+          empty="No orders are escrowed in this transaction."
+        />
           <p className="xs muted" style={{ marginTop: 12 }}>
             MedLink holds each supplier's product value until delivery is confirmed, then releases it to their
             operating account from the Transactions page.

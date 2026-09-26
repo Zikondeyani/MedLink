@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Eye, EyeOff, Star } from "lucide-react";
 import { Link } from "react-router-dom";
-import { activeProducts } from "../../data/products";
-import { categoryName } from "../../data/categories";
+import { useActiveProducts } from "../../lib/registry";
+import { categoryName } from "../../lib/registry";
 import { getSupplierById, useProductFlags, toggleProductFeatured, setProductHidden } from "../../lib/registry";
 import { useToast } from "../../lib/toast";
 import { mwk } from "../../lib/format";
@@ -12,6 +12,7 @@ import ProductImage from "../../components/ui/ProductImage";
 
 export default function AdminProductsPage() {
   const flags = useProductFlags();
+  const activeProducts = useActiveProducts();
   const { push } = useToast();
   const [q, setQ] = useState("");
 
@@ -21,6 +22,20 @@ export default function AdminProductsPage() {
         (p) => p.name.toLowerCase().includes(term) || p.brand.toLowerCase().includes(term) || categoryName(p.categoryId).toLowerCase().includes(term),
       )
     : activeProducts;
+
+  /* Every moderation toggle is a real write; a rejected change says so
+     instead of toasting a success the database never accepted. */
+  async function run(
+    work: Promise<{ ok: boolean; error?: string }>,
+    success: { title: string; message: string; icon: "success" | "info" | "error" },
+  ): Promise<void> {
+    const result = await work;
+    push(
+      result.ok
+        ? success
+        : { title: "Not changed", message: result.error ?? "The server rejected the change.", icon: "error" },
+    );
+  }
 
   const columns: Column<(typeof rows)[number]>[] = [
     {
@@ -57,10 +72,13 @@ export default function AdminProductsPage() {
         return (
           <button
             className={`btn btn-sm ${featured ? "btn-primary" : "btn-outline"}`}
-            onClick={() => {
-              toggleProductFeatured(p.id);
-              push({ title: featured ? "Removed from featured" : "Marked as featured", message: p.name, icon: "info" });
-            }}
+            onClick={() =>
+              void run(toggleProductFeatured(p.id), {
+                title: featured ? "Removed from featured" : "Marked as featured",
+                message: p.name,
+                icon: "info",
+              })
+            }
           >
             <Star size={13} /> {featured ? "Featured" : "Add"}
           </button>
@@ -75,10 +93,13 @@ export default function AdminProductsPage() {
         return (
           <button
             className={`btn btn-sm ${hidden ? "btn-primary" : "btn-outline"}`}
-            onClick={() => {
-              setProductHidden(p.id, !hidden);
-              push({ title: hidden ? "Product visible again" : "Product hidden", message: p.name, icon: "info" });
-            }}
+            onClick={() =>
+              void run(setProductHidden(p.id, !hidden), {
+                title: hidden ? "Product visible again" : "Product hidden",
+                message: p.name,
+                icon: "info",
+              })
+            }
           >
             {hidden ? <><Eye size={13} /> Show</> : <><EyeOff size={13} /> Hide</>}
           </button>
@@ -106,7 +127,12 @@ export default function AdminProductsPage() {
       </div>
 
       <div className="card card-pad">
-        <DataTable columns={columns} rows={rows} minWidth={820} />
+        <DataTable
+        columns={columns}
+        rows={rows}
+        minWidth={820}
+        empty={term ? "No products match that search." : "No products in the marketplace yet."}
+      />
       </div>
     </div>
   );

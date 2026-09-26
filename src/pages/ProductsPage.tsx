@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { activeProducts } from "../data/products";
+import { useActiveProducts } from "../lib/registry";
 import FilterPanel, { applyFilters, defaultFilters, type ProductFilters } from "../components/marketplace/FilterPanel";
 import ProductGrid from "../components/marketplace/ProductGrid";
 import EmptyState from "../components/ui/EmptyState";
@@ -16,7 +16,8 @@ export default function ProductsPage() {
     supplierId: params.get("supplier") ?? "",
   });
 
-  const results = useMemo(() => applyFilters(activeProducts, filters), [filters]);
+  const activeProducts = useActiveProducts();
+  const results = useMemo(() => applyFilters(activeProducts, filters), [filters, activeProducts]);
   const activeCount = useMemo(() => {
     let n = 0;
     if (filters.categoryId) n++;

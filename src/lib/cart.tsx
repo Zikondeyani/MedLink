@@ -1,5 +1,5 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
-import { productById } from "../data/products";
+﻿import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { productById } from "../lib/registry";
 import type { Product } from "../data/types";
 
 export interface CartLine {

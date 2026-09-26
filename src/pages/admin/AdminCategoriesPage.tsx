@@ -35,24 +35,42 @@ export default function AdminCategoriesPage() {
     setEditingId(id);
   }
 
-  function save(): void {
+  /* Categories are real rows — a rejected write must not look like a success. */
+  async function run(
+    work: Promise<{ ok: boolean; error?: string }>,
+    success: { title: string; message: string; icon: "success" | "info" },
+  ): Promise<void> {
+    const result = await work;
+    push(
+      result.ok
+        ? success
+        : { title: "Not saved", message: result.error ?? "The server rejected the change.", icon: "error" },
+    );
+  }
+
+  async function save(): Promise<void> {
     if (!draft.name.trim() || !draft.description.trim()) {
       push({ title: "Missing fields", message: "Name and description are required.", icon: "error" });
       return;
     }
     if (editingId === "new") {
-      addCategory({ name: draft.name, description: draft.description, icon: draft.icon });
-      push({ title: "Category added", message: `${draft.name} is live on the marketplace.`, icon: "success" });
+      await run(addCategory({ name: draft.name, description: draft.description, icon: draft.icon }), {
+        title: "Category added",
+        message: `${draft.name} is live on the marketplace.`,
+        icon: "success",
+      });
     } else if (editingId) {
-      updateCategory(editingId, { name: draft.name, description: draft.description, icon: draft.icon });
-      push({ title: "Category updated", message: draft.name, icon: "success" });
+      await run(updateCategory(editingId, { name: draft.name, description: draft.description, icon: draft.icon }), {
+        title: "Category updated",
+        message: draft.name,
+        icon: "success",
+      });
     }
     setEditingId(null);
   }
 
   function remove(id: string, name: string): void {
-    removeCategory(id);
-    push({ title: "Category removed", message: name, icon: "info" });
+    void run(removeCategory(id), { title: "Category removed", message: name, icon: "info" });
   }
 
   return (

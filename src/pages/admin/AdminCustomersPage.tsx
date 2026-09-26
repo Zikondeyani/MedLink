@@ -1,9 +1,12 @@
-import { supplierCustomers, customerOrders } from "../../data/orders";
-import { useCustomerFlags, toggleCustomerBlocked } from "../../lib/registry";
+import { useEffect } from "react";
+import { useAccounts } from "../../lib/accounts";
+import { setCustomerBlocked, useCustomerFlags } from "../../lib/registry";
+import { useOrders } from "../../lib/customerData";
 import { useToast } from "../../lib/toast";
-import { mwk } from "../../lib/format";
+import { mwk, shortDate } from "../../lib/format";
 import DataTable from "../../components/ui/DataTable";
 import type { Column } from "../../components/ui/DataTable";
+import EmptyState from "../../components/ui/EmptyState";
 
 interface CustomerRow {
   id: string;
@@ -13,35 +16,60 @@ interface CustomerRow {
   orders: number;
   total: number;
   since: string;
-  kind: "Facility" | "Buyer";
+  /** Blocked straight from the account row, not a local mirror. */
+  blocked: boolean;
 }
 
 export default function AdminCustomersPage() {
+  const { accounts, loading, loaded, error, refresh } = useAccounts();
   const flags = useCustomerFlags();
+  const orders = useOrders();
   const { push } = useToast();
 
-  const byName = new Map<string, { orders: number; total: number; city: string }>();
-  for (const o of customerOrders) {
-    const cur = byName.get(o.customerName) ?? { orders: 0, total: 0, city: o.address.city };
-    cur.orders += 1;
-    cur.total += o.total;
-    cur.city = o.address.city;
-    byName.set(o.customerName, cur);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // Registered accounts are the source; the order history only adds the spend.
+  const byEmail = new Map<string, { orders: number; total: number; city: string; last: string }>();
+  for (const order of orders) {
+    const key = order.customerEmail.trim().toLowerCase();
+    const entry = byEmail.get(key) ?? { orders: 0, total: 0, city: order.address.city, last: order.placedAt };
+    entry.orders += 1;
+    entry.total += order.total;
+    entry.last = order.placedAt > entry.last ? order.placedAt : entry.last;
+    byEmail.set(key, entry);
   }
 
-  const rows: CustomerRow[] = [
-    ...supplierCustomers.map((c) => ({ ...c, kind: "Facility" as const })),
-    ...[...byName.entries()].map(([name, v], i) => ({
-      id: `buyer-${i}`,
-      name,
-      contact: "—",
-      city: v.city,
-      orders: v.orders,
-      total: v.total,
-      since: "2026",
-      kind: "Buyer" as const,
-    })),
-  ];
+  const rows: CustomerRow[] = accounts
+    .filter((account) => account.role === "customer")
+    .map((account) => {
+      const stats = byEmail.get(account.email.trim().toLowerCase());
+      return {
+        id: account.id,
+        name: account.name || account.email,
+        contact: account.email,
+        city: stats?.city ?? "—",
+        orders: stats?.orders ?? 0,
+        total: stats?.total ?? 0,
+        since: shortDate(account.createdAt ?? ""),
+        blocked: account.blocked,
+      };
+    })
+    .sort((a, b) => b.orders - a.orders || a.name.localeCompare(b.name));
+
+  async function setBlocked(row: CustomerRow, blocked: boolean): Promise<void> {
+    const result = await setCustomerBlocked(row.id, blocked);
+    if (!result.ok) {
+      push({ title: "Not updated", message: result.error ?? "The server rejected the change.", icon: "error" });
+      return;
+    }
+    push({
+      title: blocked ? "Account blocked" : "Account restored",
+      message: `${row.name} ${blocked ? "can no longer" : "can now"} place orders.`,
+      icon: "info",
+    });
+  }
 
   const columns: Column<CustomerRow>[] = [
     {
@@ -49,7 +77,6 @@ export default function AdminCustomersPage() {
       header: "Customer",
       render: (c) => (
         <div className="row" style={{ gap: 8 }}>
-          <span className={`badge ${c.kind === "Facility" ? "badge-navy" : "badge-amber"}`}>{c.kind}</span>
           <div>
             <b className="small">{c.name}</b>
             <div className="xs muted">{c.contact}</div>
@@ -65,18 +92,11 @@ export default function AdminCustomersPage() {
       key: "status",
       header: "Status",
       render: (c) => {
-        const blocked = flags[c.id]?.blocked ?? false;
+        const blocked = flags[c.id]?.blocked ?? c.blocked;
         return (
           <button
             className={`btn btn-sm ${blocked ? "btn-primary" : "btn-outline"}`}
-            onClick={() => {
-              toggleCustomerBlocked(c.id);
-              push({
-                title: blocked ? "Account restored" : "Account blocked",
-                message: `${c.name} ${blocked ? "can now" : "can no longer"} place orders.`,
-                icon: "info",
-              });
-            }}
+            onClick={() => void setBlocked(c, !blocked)}
           >
             {blocked ? "Unblock" : "Block"}
           </button>
@@ -85,6 +105,14 @@ export default function AdminCustomersPage() {
     },
   ];
 
+  if (error) {
+    return (
+      <div className="stack dash-page">
+        <EmptyState icon="search" title="Could not load customers" message={error} />
+      </div>
+    );
+  }
+
   return (
     <div className="stack dash-page">
       <div className="section-head" style={{ marginBottom: 0 }}>
@@ -92,12 +120,20 @@ export default function AdminCustomersPage() {
           <span className="eyebrow">Community</span>
           <h1 className="h-section">Customers</h1>
           <p className="small muted">
-            {rows.length} customers — healthcare facilities and individual buyers on MedLink.
+            {rows.length} registered {rows.length === 1 ? "account" : "accounts"} with order history from the database.
           </p>
         </div>
       </div>
       <div className="card card-pad">
-        <DataTable columns={columns} rows={rows} minWidth={700} />
+        {rows.length === 0 && loaded && !loading ? (
+          <EmptyState
+            icon="box"
+            title="No customers yet"
+            message="Customer accounts appear here as soon as people sign up."
+          />
+        ) : (
+          <DataTable columns={columns} rows={rows} minWidth={700} />
+        )}
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import { ShoppingCart, Trash2 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { supplierById } from "../data/suppliers";
+import { getSupplierById } from "../lib/registry";
 import { mwk } from "../lib/format";
 import { useCart } from "../lib/cart";
 import { useToast } from "../lib/toast";
@@ -44,7 +44,7 @@ export default function CartPage() {
       <div className="split cart-layout">
         <div className="stack">
           {summary.groups.map((group) => {
-            const supplier = supplierById(group.supplierId);
+            const supplier = getSupplierById(group.supplierId);
             return (
               <div key={group.supplierId} className="card cart-group">
                 <div className="cart-group-head">

@@ -1,8 +1,6 @@
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { categories } from "../data/categories";
-import { suppliers } from "../data/suppliers";
-import { activeProducts } from "../data/products";
+import { useActiveProducts, useCategories, useSuppliers } from "../lib/registry";
 import ProductGrid from "../components/marketplace/ProductGrid";
 import SupplierCard from "../components/marketplace/SupplierCard";
 import EmptyState from "../components/ui/EmptyState";
@@ -10,6 +8,9 @@ import SearchBar from "../components/ui/SearchBar";
 
 export default function SearchPage() {
   const [params] = useSearchParams();
+  const categories = useCategories();
+  const suppliers = useSuppliers();
+  const activeProducts = useActiveProducts();
   const q = params.get("q") ?? "";
   const term = q.trim().toLowerCase();
 
@@ -31,7 +32,7 @@ export default function SearchPage() {
     );
     const cats = categories.filter((c) => c.name.toLowerCase().includes(term) || c.description.toLowerCase().includes(term));
     return { products, suppliers: sups, categories: cats };
-  }, [term]);
+  }, [term, activeProducts, suppliers, categories]);
 
   const supplierCount = new Set(results.products.map((p) => p.supplierId)).size;
 

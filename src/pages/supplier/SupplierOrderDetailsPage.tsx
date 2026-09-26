@@ -1,9 +1,8 @@
-import { useState } from "react";
 import { ArrowLeft, Check, MapPin, PackageCheck, Phone, Truck } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
-import { supplierOrderById } from "../../data/orders";
+import { updateSupplierOrderStatus, useSupplierOrderById } from "../../lib/customerData";
 import type { SupplierOrderStatus } from "../../data/types";
-import { supplyOrderStatusSteps } from "../../data/sales";
+import { supplyOrderStatusSteps } from "../../lib/analytics";
 import { mwk, shortDate } from "../../lib/format";
 import { useToast } from "../../lib/toast";
 import { SupplierOrderStatusBadge } from "../../components/marketplace/OrderStatus";
@@ -13,8 +12,7 @@ const stageOrder: SupplierOrderStatus[] = ["new", "confirmed", "preparing", "rea
 
 export default function SupplierOrderDetailsPage() {
   const { id } = useParams<{ id: string }>();
-  const initial = supplierOrderById(id ?? "");
-  const [order, setOrder] = useState(initial);
+  const order = useSupplierOrderById(id);
   const { push } = useToast();
 
   if (!order) {
@@ -30,8 +28,12 @@ export default function SupplierOrderDetailsPage() {
 
   const currentIdx = stageOrder.indexOf(order.status);
 
-  const advance = (to: SupplierOrderStatus) => {
-    setOrder({ ...order, status: to });
+  const advance = async (to: SupplierOrderStatus) => {
+    const result = await updateSupplierOrderStatus(order.id, to);
+    if (!result.ok) {
+      push({ title: "Could not update", message: result.error ?? "The status change was rejected.", icon: "error" });
+      return;
+    }
     if (to === "confirmed") push({ title: "Order accepted", message: `${order.number} confirmed. MedLink notified.`, icon: "success" });
     if (to === "ready") push({ title: "Marked as ready", message: `MedLink will collect ${order.number}.`, icon: "order" });
   };

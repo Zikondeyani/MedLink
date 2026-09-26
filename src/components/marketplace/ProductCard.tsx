@@ -1,6 +1,6 @@
 import { Heart, ShoppingCart } from "lucide-react";
 import { Link } from "react-router-dom";
-import { supplierById } from "../../data/suppliers";
+import { getSupplierById } from "../../lib/registry";
 import type { Product } from "../../data/types";
 import { useCart } from "../../lib/cart";
 import { useToast } from "../../lib/toast";
@@ -29,7 +29,7 @@ export function StockStatus({ stock, unit = "unit" }: { stock: number; unit?: st
 }
 
 export default function ProductCard({ product, compact = false }: { product: Product; compact?: boolean }) {
-  const supplier = supplierById(product.supplierId);
+  const supplier = getSupplierById(product.supplierId);
   const { add } = useCart();
   const { push } = useToast();
   const { has, toggle } = useWishlist();

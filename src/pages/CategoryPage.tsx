@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+﻿import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getCategoryBySlug } from "../lib/registry";
-import { activeProducts, productsByCategory } from "../data/products";
+import { productsByCategory, useActiveProducts } from "../lib/registry";
 import ProductGrid from "../components/marketplace/ProductGrid";
 import EmptyState from "../components/ui/EmptyState";
 import { CategoryIcon } from "../components/ui/Icon";
@@ -10,6 +10,7 @@ import { ArrowRight } from "lucide-react";
 export default function CategoryPage() {
   const { slug } = useParams<{ slug: string }>();
   const category = getCategoryBySlug(slug ?? "");
+  const activeProducts = useActiveProducts();
 
   const pageProducts = useMemo(() => (category ? productsByCategory(category.id) : []), [category]);
   const related = useMemo(
@@ -19,7 +20,7 @@ export default function CategoryPage() {
             .filter((p) => p.categoryId !== category.id && (p.popular || p.isNew))
             .slice(0, 4)
         : [],
-    [category],
+    [category, activeProducts],
   );
 
   if (!category) {

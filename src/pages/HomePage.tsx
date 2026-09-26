@@ -1,8 +1,6 @@
 import { ArrowRight, BadgeCheck, ClipboardCheck, ShieldCheck, ShoppingCart, Truck } from "lucide-react";
 import { Link, Navigate } from "react-router-dom";
-import { useCategories, useSuppliers } from "../lib/registry";
-import { supplierById } from "../data/suppliers";
-import { activeProducts } from "../data/products";
+import { getSupplierById, useActiveProducts, useCategories, usePricing, useSuppliers } from "../lib/registry";
 import { useAuth } from "../lib/auth";
 import SearchBar from "../components/ui/SearchBar";
 import SupplierCard from "../components/marketplace/SupplierCard";
@@ -13,12 +11,17 @@ import HomeFaq from "../components/marketplace/HomeFaq";
 import HomeSignIn from "../components/auth/HomeSignIn";
 import CustomerDashboard from "../components/marketplace/CustomerDashboard";
 
-const featured = activeProducts.filter((p) => p.popular).slice(0, 4);
-
 export default function HomePage() {
   const cats = useCategories();
   const suppliers = useSuppliers();
+  const activeProducts = useActiveProducts();
+  const pricing = usePricing();
+  const featured = activeProducts.filter((p) => p.popular).slice(0, 4);
   const { user } = useAuth();
+
+  // Per-city delivery rates if MedLink has set any, otherwise delivery is flat
+  // everywhere and the strip says so instead of showing zero.
+  const cityCount = Object.keys(pricing.deliveryFees).length || null;
 
   // Signed-in users never see the marketing home — it becomes their
   // dashboard instead. Suppliers and admins land on their own dashboards.
@@ -76,7 +79,7 @@ export default function HomePage() {
                   <ProductImage productId={p.id} categoryId={p.categoryId} name={p.name} className="hero-show-img" />
                   {i < 2 && (
                     <div className="hero-show-body">
-                      <small className="hero-show-supplier">{supplierById(p.supplierId)?.name}</small>
+                      <small className="hero-show-supplier">{getSupplierById(p.supplierId)?.name}</small>
                       <b className="hero-show-name">{p.name}</b>
                       <div className="hero-show-row">
                         <PriceDisplay price={p.price} unit={p.unit} size="md" />
@@ -117,13 +120,16 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ---------- Stats strip ---------- */}
+      {/* ---------- Stats strip — live counts from the marketplace ---------- */}
       <section className="stats-strip">
         <div className="container stats-grid">
-          <div className="stat"><b>{suppliers.length}+</b><span>Trusted suppliers</span></div>
-          <div className="stat"><b>{activeProducts.length * 12}+</b><span>Medical products</span></div>
-          <div className="stat"><b>4,800+</b><span>Orders delivered</span></div>
-          <div className="stat"><b>4 cities</b><span>Nationwide delivery</span></div>
+          <div className="stat"><b>{suppliers.length}</b><span>Trusted suppliers</span></div>
+          <div className="stat"><b>{activeProducts.length}</b><span>Medical products</span></div>
+          <div className="stat"><b>{cats.length}</b><span>Departments</span></div>
+          <div className="stat">
+            <b>{cityCount ?? "All"}</b>
+            <span>{cityCount ? "Cities with delivery" : "Nationwide delivery"}</span>
+          </div>
         </div>
       </section>
 

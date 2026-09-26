@@ -20,8 +20,8 @@ import {
   User,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import type { KycStatus, SupplierApplication } from "../data/types";
-import { useApplications, submitSupplierApplication, useCategories } from "../lib/registry";
+import type { ApplicationDocument, KycStatus, SupplierApplication } from "../data/types";
+import { useCategories } from "../lib/registry";
 import { useAuth } from "../lib/auth";
 import {
   createSupplierApplication,
@@ -30,6 +30,7 @@ import {
 } from "../lib/onboarding";
 import { useToast } from "../lib/toast";
 import { shortDate } from "../lib/format";
+import { applicantOwner, formatFileSize, uploadFile, KYC_MAX_BYTES } from "../lib/cloudinary";
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -117,7 +118,28 @@ const emptyForm: FormState = {
   consent: false,
 };
 
-type Doc = { name: string; size: string; uploading: boolean } | null;
+type Doc = {
+  name: string;
+  size: string;
+  uploading: boolean;
+  /** Cloudinary URL — the path persisted in supplier_applications.documents. */
+  url?: string;
+  publicId?: string;
+  /** Set when the Cloudinary upload failed; blocks the next step. */
+  error?: string;
+} | null;
+
+/** The document record persisted locally and in Postgres (jsonb). */
+function docPayload(doc: NonNullable<Doc>, label: string): ApplicationDocument {
+  return {
+    label,
+    name: doc.name,
+    size: doc.size,
+    uploadedAt: new Date().toISOString(),
+    ...(doc.url ? { url: doc.url } : {}),
+    ...(doc.publicId ? { publicId: doc.publicId } : {}),
+  };
+}
 
 const docSlots: { key: string; label: string; hint: string }[] = [
   { key: "reg", label: "Business registration certificate", hint: "Registered with the Registrar of Companies" },
@@ -143,21 +165,31 @@ function UploadSlot({
   const inputRef = useRef<HTMLInputElement>(null);
 
   return (
-    <div className={`doc-slot${doc ? " doc-ok" : ""}`}>
+    <div className={`doc-slot${doc && !doc.error ? " doc-ok" : ""}`}>
       <input
         ref={inputRef}
         type="file"
         accept=".pdf,.png,.jpg,.jpeg"
         className="doc-file-input"
         aria-label={slot.label}
-        onChange={(e) => onFile(slot.key, e.target.files?.[0])}
+        onChange={(e) => {
+          // Keep the File, then clear so the same file can be re-picked.
+          onFile(slot.key, e.target.files?.[0]);
+          e.target.value = "";
+        }}
       />
       <span className="doc-slot-icon">
-        {doc?.uploading ? <Loader2 size={18} className="spin" /> : doc ? <CheckCircle2 size={18} className="green" /> : <FileText size={18} />}
+        {doc?.uploading ? <Loader2 size={18} className="spin" /> : doc && !doc.error ? <CheckCircle2 size={18} className="green" /> : <FileText size={18} />}
       </span>
       <div className="grow">
         <b className="small">{slot.label}</b>
-        <div className="xs muted">{doc ? `${doc.name} · ${doc.size} ${doc.uploading ? "— uploading…" : "— uploaded ✓"}` : slot.hint}</div>
+        <div className={`xs ${doc?.error ? "red" : "muted"}`}>
+          {doc
+            ? doc.error
+              ? `${doc.name} · ${doc.size} — ${doc.error}`
+              : `${doc.name} · ${doc.size} ${doc.uploading ? "— uploading…" : doc.url ? "— uploaded ✓" : "— added ✓"}`
+            : slot.hint}
+        </div>
       </div>
       <button type="button" className="btn btn-outline btn-sm" onClick={() => inputRef.current?.click()}>
         {doc ? "Replace" : <><Upload size={14} /> Upload</>}
@@ -168,7 +200,6 @@ function UploadSlot({
 
 export default function BecomeASupplierPage() {
   const categories = useCategories();
-  const applications = useApplications();
   const { push } = useToast();
   const { signUp } = useAuth();
 
@@ -185,20 +216,50 @@ export default function BecomeASupplierPage() {
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
-  function handleFile(key: string, file: File | undefined) {
+  async function handleFile(key: string, file: File | undefined) {
     if (!file) return;
-    const size =
-      file.size >= 1_048_576
-        ? `${(file.size / 1_048_576).toFixed(1)} MB`
-        : `${Math.max(1, Math.round(file.size / 1024))} KB`;
+
+    // Some pickers hand over PDFs with an empty MIME type — fall back to the
+    // extension so legitimate files are not rejected.
+    const accepted =
+      ["application/pdf", "image/png", "image/jpeg"].includes(file.type) || /\.(pdf|png|jpe?g)$/i.test(file.name);
+    const size = formatFileSize(file.size);
+
+    if (!accepted) {
+      setDocs((d) => ({ ...d, [key]: { name: file.name, size, uploading: false, error: "Use a PDF, PNG or JPG file." } }));
+      return;
+    }
+
     setDocs((d) => ({ ...d, [key]: { name: file.name, size, uploading: true } }));
-    window.setTimeout(() => {
-      setDocs((d) => {
-        const cur = d[key];
-        if (!cur) return d;
-        return { ...d, [key]: { ...cur, uploading: false } };
-      });
-    }, 900);
+
+    // Multipart POST streams the file from disk straight to Cloudinary — the
+    // bytes are never read into JavaScript memory (no base64, no data URLs).
+    // An applicant has no account yet, so their email names the folder:
+    // medlink/suppliers/<business-name>-<email-hash>/kyc
+    const result = await uploadFile(file, {
+      purpose: "kyc",
+      owner: applicantOwner(form.businessName || "applicant", form.email),
+      maxBytes: KYC_MAX_BYTES,
+    });
+
+    if (result.ok) {
+      setDocs((d) => ({
+        ...d,
+        [key]: { name: file.name, size, uploading: false, url: result.file.url, publicId: result.file.publicId },
+      }));
+      return;
+    }
+
+    if (result.notConfigured) {
+      // Demo mode (no Supabase backend): keep the metadata-only flow so the
+      // application can still be submitted end to end.
+      setDocs((d) => ({ ...d, [key]: { name: file.name, size, uploading: false } }));
+      push({ title: "Uploads unavailable", message: result.error, icon: "info" });
+      return;
+    }
+
+    setDocs((d) => ({ ...d, [key]: { name: file.name, size, uploading: false, error: result.error } }));
+    push({ title: "Upload failed", message: `${file.name} — ${result.error}`, icon: "error" });
   }
 
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email);
@@ -220,7 +281,7 @@ export default function BecomeASupplierPage() {
           !form.opAccountNumber.trim()
         );
       case 4:
-        return docSlots.some((s) => !docs[s.key] || docs[s.key]?.uploading);
+        return docSlots.some((s) => !docs[s.key] || docs[s.key]?.uploading || docs[s.key]?.error);
       case 5:
         return !form.consent;
     }
@@ -255,9 +316,9 @@ export default function BecomeASupplierPage() {
       directorIdType: form.directorIdType,
       directorIdNumber: form.directorIdNumber.trim(),
       documents: [
-        { label: "Business registration certificate", name: docs.reg!.name, size: docs.reg!.size, uploadedAt: new Date().toISOString() },
-        { label: "Tax clearance certificate", name: docs.tax!.name, size: docs.tax!.size, uploadedAt: new Date().toISOString() },
-        { label: "Director ID (front & back)", name: docs.id!.name, size: docs.id!.size, uploadedAt: new Date().toISOString() },
+        docPayload(docs.reg!, "Business registration certificate"),
+        docPayload(docs.tax!, "Tax clearance certificate"),
+        docPayload(docs.id!, "Director ID (front & back)"),
       ],
       operatingAccount: {
         bankName: form.opBankName.trim(),
@@ -270,15 +331,24 @@ export default function BecomeASupplierPage() {
 
     setSubmitting(true);
 
-    // 1) Store the KYC application. With a Supabase project configured this is a
-    //    real insert (the public form is allowed by RLS). The reference the
-    //    server issues is reused below so an admin review finds the same row.
+    // 1) Store the KYC application. The server issues the reference the admin
+    //    queue works from, and the success screen shows the stored row.
     const backend = await createSupplierApplication(input);
-    const app = submitSupplierApplication(
-      input,
-      backend.status === "submitted" ? backend.ref : undefined,
-    );
 
+    if (backend.status !== "submitted") {
+      setSubmitting(false);
+      push({
+        title: "Application not stored",
+        message:
+          backend.status === "error"
+            ? backend.error
+            : "The MedLink server is not reachable right now. Please try again shortly.",
+        icon: "error",
+      });
+      return;
+    }
+
+    const app = backend.application;
     setDone(app);
     setCheckedApp(null);
 
@@ -310,14 +380,6 @@ export default function BecomeASupplierPage() {
       push({ title: "Application submitted", message: `Reference ${app.ref} — our team will review your KYC within 2–3 working days.`, icon: "success" });
     }
 
-    if (backend.status === "error") {
-      push({
-        title: "Saved in this browser only",
-        message: `Reference ${app.ref} could not be stored on the MedLink server: ${backend.error}`,
-        icon: "error",
-      });
-    }
-
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -340,21 +402,12 @@ export default function BecomeASupplierPage() {
     }
     if (remote.status === "error") {
       push({ title: "Could not check that reference", message: remote.error, icon: "error" });
-    }
-
-    const local = applications.find((a) => a.ref.toUpperCase() === term);
-    if (!local) {
-      setCheckedApp("notfound");
       return;
     }
-    const found: StatusView = {
-      businessName: local.businessName,
-      ref: local.ref,
-      status: local.status,
-      submittedAt: local.submittedAt,
-    };
-    if (local.reviewNote) found.reviewNote = local.reviewNote;
-    setCheckedApp(found);
+
+    // The database is the only record of an application — a reference that is
+    // not there genuinely does not exist.
+    setCheckedApp("notfound");
   }
 
   const statusTone = (status: SupplierApplication["status"]) =>
@@ -666,8 +719,12 @@ export default function BecomeASupplierPage() {
                       <UploadSlot key={s.key} slot={s} doc={docs[s.key]} onFile={handleFile} />
                     ))}
                   </div>
-                  {tried && docSlots.some((s) => !docs[s.key] || docs[s.key]?.uploading) && (
-                    <p className="small red" style={{ marginTop: 10 }}>Please upload all three documents.</p>
+                  {tried && docSlots.some((s) => !docs[s.key] || docs[s.key]?.uploading || docs[s.key]?.error) && (
+                    <p className="small red" style={{ marginTop: 10 }}>
+                      {docSlots.some((s) => docs[s.key]?.error)
+                        ? "Some documents failed to upload — replace them and try again."
+                        : "Please upload all three documents."}
+                    </p>
                   )}
                 </>
               )}

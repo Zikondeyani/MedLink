@@ -16,7 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { currentSupplierId, supplierById } from "../../data/suppliers";
+import { getSupplierById, useCurrentSupplierId } from "../../lib/registry";
 import { useAuth } from "../../lib/auth";
 import { useNotifications } from "../../lib/notifications";
 import { SupplierAvatar } from "../marketplace/SupplierCard";
@@ -34,7 +34,8 @@ const navItems = [
 ];
 
 export default function SupplierLayout() {
-  const supplier = supplierById(currentSupplierId);
+  const supplierId = useCurrentSupplierId();
+  const supplier = supplierId ? getSupplierById(supplierId) : undefined;
   const { signOut } = useAuth();
   const { unread } = useNotifications();
   const [drawer, setDrawer] = useState(false);

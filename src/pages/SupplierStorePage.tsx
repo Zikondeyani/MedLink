@@ -13,8 +13,8 @@ import {
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { useSuppliers } from "../lib/registry";
-import { productsBySupplier } from "../data/products";
-import { categoryById } from "../data/categories";
+import { productsBySupplier } from "../lib/registry";
+import { getCategoryById } from "../lib/registry";
 import { mwk } from "../lib/format";
 import { SupplierAvatar } from "../components/marketplace/SupplierCard";
 import ProductGrid from "../components/marketplace/ProductGrid";
@@ -35,7 +35,7 @@ export default function SupplierStorePage() {
   const productCats = useMemo(() => {
     const map = new Map<string, { id: string; name: string; count: number }>();
     for (const p of storeProducts) {
-      const c = categoryById(p.categoryId);
+      const c = getCategoryById(p.categoryId);
       if (!c) continue;
       const cur = map.get(c.id) ?? { id: c.id, name: c.name, count: 0 };
       cur.count++;

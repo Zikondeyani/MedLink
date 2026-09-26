@@ -15,13 +15,13 @@ import { mwk } from "../lib/format";
 import { useCart, type CartSummary } from "../lib/cart";
 import { useToast } from "../lib/toast";
 import { useAuth } from "../lib/auth";
-import { createCustomerOrder, getDefaultCustomerAddress, saveCustomerAddress } from "../lib/customerData";
-import { getPricing, recordOrderPayment } from "../lib/registry";
+import { getDefaultCustomerAddress, placeCustomerOrder, saveCustomerAddress } from "../lib/customerData";
+import { getPricing, loadMarketplace } from "../lib/registry";
 import { quoteDelivery, serviceFee } from "../components/marketplace/DeliveryFeeCard";
 import CheckoutSummary from "../components/marketplace/CheckoutSummary";
 import ProductImage from "../components/ui/ProductImage";
 import { SupplierAvatar } from "../components/marketplace/SupplierCard";
-import { supplierById } from "../data/suppliers";
+import { getSupplierById } from "../lib/registry";
 
 const steps = ["Delivery", "Delivery Fee", "Payment", "Review"] as const;
 type Step = (typeof steps)[number];
@@ -128,41 +128,48 @@ export default function CheckoutPage() {
     }
   };
 
-  const placeOrder = () => {
-    if (!user || user.role !== "customer" || !validatePayment()) return;
+  const [placing, setPlacing] = useState(false);
 
-    const order = createCustomerOrder({
-      customerEmail: user.email,
-      customerName: address.fullName,
-      address,
+  /**
+   * Place the order for real: the server re-prices every line from the
+   * products table, checks stock, writes the order, the per-store fulfilment
+   * rows, the payment and the notification in one transaction. The browser
+   * only says which products and how many.
+   */
+  const placeOrder = async () => {
+    if (!user || user.role !== "customer" || placing) return;
+    if (!validatePayment()) return;
+
+    setPlacing(true);
+    const result = await placeCustomerOrder({
       lines: summary.groups.flatMap((group) =>
-        group.lines.map(({ product, quantity }) => ({
-          productId: product.id,
-          name: product.name,
-          price: product.price,
-          quantity,
-          unit: product.unit,
-          supplierId: group.supplierId,
-          supplierName: group.supplierName || "MedLink supplier",
-          image: product.id,
-        })),
+        group.lines.map(({ product, quantity }) => ({ productId: product.id, quantity })),
       ),
-      subtotal: summary.subtotal,
-      serviceFee: fee,
-      deliveryFee: delivery.baseFee,
-      total,
+      address,
       payment: { method: payment.method, reference: safePaymentReference(payment) },
+      estimatedDelivery: delivery.estimated,
     });
-    saveCustomerAddress(user.email, address);
-    recordOrderPayment(order);
+
+    if (!result.ok) {
+      setPlacing(false);
+      push({ title: "Order not placed", message: result.error, icon: "error" });
+      return;
+    }
+
+    // Remember where it was going, then re-read the marketplace so the order
+    // list, the store queues and the notifications all show the new order.
+    void saveCustomerAddress(user.email, address);
+    void loadMarketplace();
+
     setPlaced(summary);
-    setPlacedOrderId(order.id);
-    setPlacedOrderNumber(order.number);
+    setPlacedOrderId(result.order.id);
+    setPlacedOrderNumber(result.order.number);
     setOrderPlaced(true);
+    setPlacing(false);
     clear();
     push({
       title: "Order placed",
-      message: `Your order ${order.number} has been successfully placed.`,
+      message: `Your order ${result.order.number} has been successfully placed.`,
       icon: "order",
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -183,7 +190,7 @@ export default function CheckoutPage() {
 
   if (orderPlaced) {
     const placedSummary = placed ?? summary;
-    const suppliers = placedSummary.groups.map((g) => supplierById(g.supplierId)?.name ?? g.supplierName);
+    const suppliers = placedSummary.groups.map((g) => getSupplierById(g.supplierId)?.name ?? g.supplierName);
     return (
       <div className="container page checkout-success">
         <div className="card card-pad success-card">
@@ -372,7 +379,7 @@ export default function CheckoutPage() {
               <div className="card card-pad">
                 <h2 className="h-card" style={{ marginBottom: 14 }}>Review your order</h2>
                 {summary.groups.map((g) => {
-                  const supplier = supplierById(g.supplierId);
+                  const supplier = getSupplierById(g.supplierId);
                   return (
                     <div key={g.supplierId} className="review-group">
                       <div className="row" style={{ gap: 8, marginBottom: 10 }}>

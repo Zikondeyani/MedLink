@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { getSupplierBySlug, reviewApplication, slugify, useApplications } from "../../lib/registry";
-import { reviewSupplierApplicationOnBackend } from "../../lib/onboarding";
 import { useToast } from "../../lib/toast";
 import { prettyDate } from "../../lib/format";
 
@@ -52,38 +51,34 @@ export default function AdminApplicationDetailPage() {
     rejected: "badge-red",
   };
 
-  async function approve(): Promise<void> {
-    const result = await reviewSupplierApplicationOnBackend(app!, "approved");
-    reviewApplication(app!.id, "approved");
+  /**
+   * The database is the only record of a decision: it stores the outcome and,
+   * on approval, creates the store and grants the role. If the write fails the
+   * queue is left exactly as it was.
+   */
+  async function decide(status: "approved" | "rejected", reason?: string): Promise<void> {
+    const result = await reviewApplication(app!.id, status, reason);
     setRejecting(false);
     setNote("");
-    if (result.status === "error") {
+    if (!result.ok) {
       push({
-        title: "Approved in this browser only",
-        message: `The MedLink server could not be updated: ${result.error}`,
+        title: "Decision not stored",
+        message: result.error ?? "The MedLink server rejected the review.",
         icon: "error",
       });
       return;
     }
-    push({ title: "Supplier approved", message: "KYC verified — the store is now live on the marketplace.", icon: "success" });
+    push(
+      status === "approved"
+        ? { title: "Supplier approved", message: "KYC verified — the store is now live on the marketplace.", icon: "success" }
+        : { title: "Application rejected", message: "The applicant has been notified of the outcome.", icon: "error" },
+    );
   }
 
-  async function reject(): Promise<void> {
-    const reason = note || "KYC documents did not pass verification.";
-    const result = await reviewSupplierApplicationOnBackend(app!, "rejected", reason);
-    reviewApplication(app!.id, "rejected", reason);
-    setRejecting(false);
-    setNote("");
-    if (result.status === "error") {
-      push({
-        title: "Rejected in this browser only",
-        message: `The MedLink server could not be updated: ${result.error}`,
-        icon: "error",
-      });
-      return;
-    }
-    push({ title: "Application rejected", message: "The applicant has been notified of the outcome.", icon: "error" });
-  }
+  const approve = (): Promise<void> => decide("approved");
+
+  const reject = (): Promise<void> =>
+    decide("rejected", note || "KYC documents did not pass verification.");
 
   return (
     <div className="stack dash-page">
@@ -140,7 +135,13 @@ export default function AdminApplicationDetailPage() {
                     <b className="small">{d.label}</b>
                     <div className="xs muted">{d.name} · {d.size} · uploaded {prettyDate(d.uploadedAt)}</div>
                   </div>
-                  <span className="badge badge-green"><CheckCircle2 size={13} /> Verified file</span>
+                  {d.url ? (
+                    <a className="badge badge-green" href={d.url} target="_blank" rel="noreferrer">
+                      <ExternalLink size={13} /> Open file
+                    </a>
+                  ) : (
+                    <span className="badge badge-green"><CheckCircle2 size={13} /> Verified file</span>
+                  )}
                 </div>
               ))}
             </div>

@@ -1,8 +1,7 @@
 import { Link } from "react-router-dom";
 import { CheckCircle2, Clock, Package, Wallet } from "lucide-react";
-import { customerOrders } from "../../data/orders";
-import { activeProducts } from "../../data/products";
-import { suppliers } from "../../data/suppliers";
+import { useCustomerOrders } from "../../lib/customerData";
+import { useActiveProducts, useSuppliers } from "../../lib/registry";
 import { mwk } from "../../lib/format";
 import { useAuth } from "../../lib/auth";
 import DashboardCard from "../ui/DashboardCard";
@@ -17,6 +16,9 @@ import { CustomerOrderStatusBadge } from "./OrderStatus";
  */
 export default function CustomerDashboard() {
   const { user } = useAuth();
+  const customerOrders = useCustomerOrders(user?.email ?? "");
+  const activeProducts = useActiveProducts();
+  const suppliers = useSuppliers();
   const delivered = customerOrders.filter((o) => o.status === "delivered").length;
   const pending = customerOrders.filter((o) => o.status !== "delivered" && o.status !== "cancelled").length;
   const totalSpent = customerOrders.filter((o) => o.status === "delivered").reduce((a, o) => a + o.total, 0);

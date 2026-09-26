@@ -12,7 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { customerOrders } from "../../data/orders";
+import { useOrders } from "../../lib/customerData";
 import {
   getSupplierById,
   getPricing,
@@ -45,6 +45,7 @@ type PayFilter = "all" | "succeeded" | "failed";
 
 export default function AdminTransactionsPage() {
   const suppliers = useSuppliers();
+  const customerOrders = useOrders();
   const released = useReleasedOrders();
   const payouts = usePayouts();
   const payments = usePaymentTransactions();
@@ -83,14 +84,16 @@ export default function AdminTransactionsPage() {
 
   const heldRows = rows.filter((r) => r.heldAmount > 0);
 
-  function doRelease(row: EscrowRow): void {
-    const record = releaseSupplierFunds(row.supplier.id);
-    if (record) {
+  async function doRelease(row: EscrowRow): Promise<void> {
+    const result = await releaseSupplierFunds(row.supplier.id);
+    if (result.ok && result.record) {
       push({
         title: "Funds released",
-        message: `${mwk(record.amount)} sent to ${row.supplier.name} · MedLink kept ${mwk(record.serviceFee)} service fee.`,
+        message: `${mwk(result.record.amount)} sent to ${row.supplier.name} · MedLink kept ${mwk(result.record.serviceFee)} service fee.`,
         icon: "success",
       });
+    } else if (result.error) {
+      push({ title: "Release failed", message: result.error, icon: "error" });
     }
     setReleaseTarget(null);
   }
@@ -347,7 +350,12 @@ export default function AdminTransactionsPage() {
           </div>
           <span className="xs muted">{rows.length} suppliers</span>
         </div>
-        <DataTable columns={escrowColumns} rows={rows} minWidth={760} />
+        <DataTable
+          columns={escrowColumns}
+          rows={rows}
+          minWidth={760}
+          empty="No supplier escrow to release."
+        />
       </div>
 
       <div className="card card-pad">
@@ -374,7 +382,12 @@ export default function AdminTransactionsPage() {
         {filteredPayments.length === 0 ? (
           <p className="small muted">No payments in this view.</p>
         ) : (
-          <DataTable columns={paymentColumns} rows={filteredPayments} minWidth={800} />
+          <DataTable
+          columns={paymentColumns}
+          rows={filteredPayments}
+          minWidth={800}
+          empty="No buyer payments recorded yet."
+        />
         )}
       </div>
 
@@ -389,7 +402,12 @@ export default function AdminTransactionsPage() {
         {payouts.length === 0 ? (
           <p className="small muted">No payouts have been made yet.</p>
         ) : (
-          <DataTable columns={payoutColumns} rows={payouts} minWidth={720} />
+          <DataTable
+          columns={payoutColumns}
+          rows={payouts}
+          minWidth={720}
+          empty="No escrow has been released to a supplier yet."
+        />
         )}
       </div>
 

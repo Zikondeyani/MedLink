@@ -9,6 +9,7 @@
    Supabase project is configured, so the pages fall back to the local
    registry and the demo keeps working end to end.
    ============================================================ */
+import { toApplication } from "./db";
 import { slugify } from "./registry";
 import { supabase } from "./supabase";
 import type { ApplicationStatusRow, KycStatus } from "./database.types";
@@ -18,7 +19,7 @@ import type { SupplierApplication } from "../data/types";
 export type SupplierApplicationInput = Omit<SupplierApplication, "id" | "ref" | "status" | "submittedAt">;
 
 export type ApplicationSubmitResult =
-  | { status: "submitted"; id: string; ref: string }
+  | { status: "submitted"; application: SupplierApplication }
   | { status: "skipped" }
   | { status: "error"; error: string };
 
@@ -55,7 +56,7 @@ export function supplierTenantId(businessName: string): string {
 export async function createSupplierApplication(
   input: SupplierApplicationInput,
 ): Promise<ApplicationSubmitResult> {
-  if (!supabase) return { status: "skipped" };
+  if (!supabase) return { status: "error", error: "No backend configured." };
 
   // A signed-in applicant claims the row; guests leave it unlinked.
   const { data: sessionData } = await supabase.auth.getSession();
@@ -90,15 +91,22 @@ export async function createSupplierApplication(
         name: doc.name,
         size: doc.size,
         uploadedAt: doc.uploadedAt,
+        // Cloudinary path (jsonb column — no migration needed when present).
+        ...(doc.url ? { url: doc.url } : {}),
+        ...(doc.publicId ? { publicId: doc.publicId } : {}),
       })),
     })
-    .select("id, ref")
+    .select(
+      "id, applicant_id, ref, business_name, business_type, category_focus, website, contact_email, phone, city, area, registration_number, director_name, director_id_type, director_id_number, operating_account, documents, status, submitted_at, reviewed_at, reviewed_by, review_note",
+    )
     .single();
 
   if (error || !data) {
     return { status: "error", error: error?.message ?? "Could not submit the application." };
   }
-  return { status: "submitted", id: data.id, ref: data.ref };
+  // The success screen shows the row the server actually stored, reference and
+  // all — not a guess rebuilt from the form.
+  return { status: "submitted", application: toApplication(data) };
 }
 
 /**

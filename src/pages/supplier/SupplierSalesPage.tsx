@@ -1,14 +1,28 @@
-import { monthlyOrders, monthlySales, supplierDashboardStats, topProducts, categorySales } from "../../data/sales";
+import {
+  useCategorySales,
+  useMonthlyOrders,
+  useMonthlySales,
+  useSupplierDashboardStats,
+  useTopProducts,
+} from "../../lib/analytics";
+import { useCurrentSupplierId } from "../../lib/registry";
 import { mwk, mwkCompact } from "../../lib/format";
 import { LineChart, BarChart, DonutChart } from "../../components/charts/Charts";
 import DashboardCard from "../../components/ui/DashboardCard";
 import { Wallet, ShoppingBag, TrendingUp, Percent } from "lucide-react";
 
 export default function SupplierSalesPage() {
+  // Every figure below is this store's own history, read from the database.
+  const supplierId = useCurrentSupplierId() ?? undefined;
+  const monthlySales = useMonthlySales(supplierId);
+  const monthlyOrders = useMonthlyOrders(supplierId);
+  const topProducts = useTopProducts(supplierId);
+  const categorySales = useCategorySales(supplierId);
+  const stats = useSupplierDashboardStats(supplierId);
+
   const total = monthlySales.reduce((a, d) => a + d.sales, 0);
   const orders = monthlyOrders.reduce((a, d) => a + d.orders, 0);
-  const avg = Math.round(total / orders);
-  const conversion = supplierDashboardStats.conversion;
+  const avg = orders === 0 ? 0 : Math.round(total / orders);
 
   return (
     <div className="stack">
@@ -21,10 +35,10 @@ export default function SupplierSalesPage() {
       </div>
 
       <div className="grid grid-4 dash-grid">
-        <DashboardCard icon={<Wallet size={19} />} label="Total revenue" value={mwkCompact(total)} sub="Last 12 months" tone="teal" trend={12.4} />
-        <DashboardCard icon={<ShoppingBag size={19} />} label="Total orders" value={String(orders)} sub="Last 12 months" tone="navy" trend={8.2} />
+        <DashboardCard icon={<Wallet size={19} />} label="Total revenue" value={mwkCompact(total)} sub="Last 12 months" tone="teal" />
+        <DashboardCard icon={<ShoppingBag size={19} />} label="Total orders" value={String(orders)} sub="Last 12 months" tone="navy" />
         <DashboardCard icon={<TrendingUp size={19} />} label="Avg. order value" value={mwkCompact(avg)} sub="Per order" tone="green" />
-        <DashboardCard icon={<Percent size={19} />} label="Conversion" value={`${conversion}%`} sub="Store visits → orders" tone="amber" />
+        <DashboardCard icon={<Percent size={19} />} label="Fulfilment" value={`${stats.fulfilment}%`} sub="Orders completed" tone="amber" />
       </div>
 
       <div className="grid" style={{ gridTemplateColumns: "1.6fr 1fr" }}>
