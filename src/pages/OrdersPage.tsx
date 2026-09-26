@@ -64,7 +64,7 @@ export default function OrdersPage() {
             <div className="order-card-side">
               <div className="between" style={{ gap: 16 }}>
                 <span className="muted small">{o.status === "delivered" ? "Delivered" : "Est. delivery"}</span>
-                <b>{o.status === "delivered" ? shortDate(o.placedAt) : "Today / Tomorrow"}</b>
+                <b>{o.status === "delivered" ? shortDate(o.placedAt) : o.estimatedDelivery || "To be confirmed"}</b>
               </div>
               <div className="between" style={{ gap: 16 }}>
                 <span className="muted small">Total</span>

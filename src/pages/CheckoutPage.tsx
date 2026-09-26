@@ -5,6 +5,7 @@ import {
   ChevronRight,
   CreditCard,
   Landmark,
+  Loader2,
   Package,
   Smartphone,
   Truck,
@@ -86,7 +87,9 @@ export default function CheckoutPage() {
   });
   const [paymentError, setPaymentError] = useState("");
 
-  const delivery = useMemo(() => quoteDelivery(address.city), [address.city]);
+  // The estimate is whatever the stores in this cart promise, so pass their ids.
+  const cartSupplierIds = useMemo(() => summary.groups.map((g) => g.supplierId), [summary.groups]);
+  const delivery = useMemo(() => quoteDelivery(address.city, cartSupplierIds), [address.city, cartSupplierIds]);
   const fee = serviceFee(summary.subtotal);
   const ratePct = Math.round(getPricing().serviceFeeRate * 100);
   const total = summary.subtotal + fee + delivery.baseFee;
@@ -129,6 +132,8 @@ export default function CheckoutPage() {
   };
 
   const [placing, setPlacing] = useState(false);
+  /** The estimate that was actually sent with the order, kept for the receipt. */
+  const [placedEstimate, setPlacedEstimate] = useState("");
 
   /**
    * Place the order for real: the server re-prices every line from the
@@ -164,6 +169,7 @@ export default function CheckoutPage() {
     setPlaced(summary);
     setPlacedOrderId(result.order.id);
     setPlacedOrderNumber(result.order.number);
+    setPlacedEstimate(result.order.estimatedDelivery ?? delivery.estimated);
     setOrderPlaced(true);
     setPlacing(false);
     clear();
@@ -203,7 +209,7 @@ export default function CheckoutPage() {
             <div className="success-item"><small className="muted">Supplier</small><b>{suppliers.join(", ")}</b></div>
             <div className="success-item"><small className="muted">Products</small><b>{placedSummary.items} items</b></div>
             <div className="success-item"><small className="muted">Delivery</small><b>MedLink Delivery</b></div>
-            <div className="success-item"><small className="muted">Estimated delivery</small><b>Today / Tomorrow</b></div>
+            <div className="success-item"><small className="muted">Estimated delivery</small><b>{placedEstimate || "To be confirmed"}</b></div>
           </div>
           <div className="row" style={{ justifyContent: "center", marginTop: 24, flexWrap: "wrap" }}>
             <Link to={`/orders/${placedOrderId}`} className="btn btn-primary"><Truck size={16} /> Track order</Link>
@@ -423,8 +429,9 @@ export default function CheckoutPage() {
                 Continue <ChevronRight size={16} />
               </button>
             ) : (
-              <button className="btn btn-green btn-lg" onClick={placeOrder}>
-                <Banknote size={17} /> Place Order — {mwk(total)}
+              <button className="btn btn-green btn-lg" onClick={() => void placeOrder()} disabled={placing}>
+                {placing ? <Loader2 size={17} className="spin" /> : <Banknote size={17} />}
+                {placing ? "Placing order…" : `Place Order — ${mwk(total)}`}
               </button>
             )}
           </div>

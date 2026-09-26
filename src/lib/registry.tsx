@@ -210,9 +210,14 @@ export function usePricing(): PricingConfig {
 }
 
 /** Delivery fee quote for a buyer address city (live admin pricing). */
-export function quoteDelivery(city: string): DeliveryQuote {
+export function quoteDelivery(city: string, supplierIds: string[] = []): DeliveryQuote {
   const fee = pricing.deliveryFees?.[city] ?? pricing.defaultDeliveryFee ?? 0;
-  return { baseFee: fee, estimated: "1–2 days" };
+  // The slowest store in the order sets the estimate — the buyer waits for the
+  // whole order, so one supplier's promise must not understate it.
+  const estimates = supplierIds
+    .map((id) => suppliers.find((s) => s.id === id)?.delivery.estimate)
+    .filter((value): value is string => Boolean(value));
+  return { baseFee: fee, estimated: estimates.length ? estimates.join(" / ") : "" };
 }
 
 /** MedLink's share of the goods value (used for display only — the server decides). */

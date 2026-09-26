@@ -23,6 +23,18 @@ export default function HomePage() {
   // everywhere and the strip says so instead of showing zero.
   const cityCount = Object.keys(pricing.deliveryFees).length || null;
 
+  // Hero claims must match the marketplace, so derive them from the rows.
+  const deliveryEstimates = [
+    ...new Set(suppliers.map((s) => s.delivery.estimate).filter(Boolean)),
+  ];
+  const deliveryLine = deliveryEstimates.length
+    ? `Typically ${deliveryEstimates.slice(0, 2).join(" or ")}`
+    : "Collected and delivered by MedLink";
+  const storeCities = [...new Set(suppliers.map((s) => s.location.city).filter(Boolean))];
+  const citiesLine = storeCities.length
+    ? `In ${storeCities.slice(0, 4).join(", ")}${storeCities.length > 4 ? ` +${storeCities.length - 4}` : ""}`
+    : "Suppliers are signing up now";
+
   // Signed-in users never see the marketing home — it becomes their
   // dashboard instead. Suppliers and admins land on their own dashboards.
   if (user) {
@@ -100,19 +112,19 @@ export default function HomePage() {
                 </Link>
               ))}
 
-              {/* Floating chips */}
+              {/* Floating chips — both claims come from the database */}
               <div className="hero-float hero-float-1 card">
                 <span className="hero-float-icon teal"><Truck size={17} /></span>
                 <div>
                   <b>MedLink delivery</b>
-                  <small>1–2 days nationwide</small>
+                  <small>{deliveryLine}</small>
                 </div>
               </div>
               <div className="hero-float hero-float-2 card">
                 <span className="hero-float-icon green"><BadgeCheck size={17} /></span>
                 <div>
                   <b>{suppliers.filter((s) => s.verified).length} verified suppliers</b>
-                  <small>Across Lilongwe, Blantyre, Mzuzu, Zomba</small>
+                  <small>{citiesLine}</small>
                 </div>
               </div>
             </div>
