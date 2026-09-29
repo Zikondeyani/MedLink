@@ -34,6 +34,20 @@ import { useCategories } from "../../lib/registry";
 import { useAuth } from "../../lib/auth";
 import type { SupplierApplicationInput } from "../../lib/onboarding";
 import {
+  checkOne,
+  collect,
+  mobileMoney,
+  ok,
+  required,
+  requiredEmail,
+  requiredMin,
+  validPhone,
+  website,
+  type FieldErrors,
+  type Rule,
+} from "../../lib/validate";
+import { ErrorSummary, FieldError, invalidProps } from "../ui/FieldError";
+import {
   applicantOwner,
   formatFileSize,
   uploadFile,
@@ -63,6 +77,77 @@ const businessTypes = [
 const directorIdTypes = ["National ID", "Passport", "Driving Licence"];
 
 const cities = ["Lilongwe", "Blantyre", "Mzuzu", "Zomba", "Karonga", "Mangochi", "Salima", "Kasungu"];
+
+/**
+ * The rules for every text field, and the order each step lists them in.
+ *
+ * Step 1 blocked on three required fields with nothing on screen to say so,
+ * which is what made the wizard look frozen. Now `validateStep` returns the
+ * same information the Continue button needs, and the panel renders it.
+ */
+const FIELD_RULES: Record<string, Rule[]> = {
+  businessName: [requiredMin("Business name", 2)],
+  businessType: [required("Business type")],
+  categoryFocus: [required("Main product category")],
+  website: [website()],
+  email: [requiredEmail()],
+  phone: [validPhone()],
+  city: [required("City")],
+  area: [required("Area / township")],
+  registrationNumber: [requiredMin("Business registration number", 2)],
+  directorName: [requiredMin("Director / owner full name", 3)],
+  directorIdType: [required("ID type")],
+  directorIdNumber: [requiredMin("ID number", 4)],
+  opBankName: [required("Bank name")],
+  opBranch: [required("Branch / city")],
+  opAccountName: [required("Account holder name")],
+  opAccountNumber: [requiredMin("Account number", 4)],
+  opMobileMoney: [mobileMoney()],
+};
+
+/** Field names per step, in the order they appear — also the summary order. */
+const STEP_FIELDS: Record<Step, string[]> = {
+  1: ["businessName", "businessType", "categoryFocus", "website"],
+  2: ["email", "phone", "city", "area"],
+  3: [
+    "registrationNumber",
+    "directorName",
+    "directorIdType",
+    "directorIdNumber",
+    "opBankName",
+    "opBranch",
+    "opAccountName",
+    "opAccountNumber",
+    "opMobileMoney",
+  ],
+  4: ["reg", "tax", "id"],
+  5: ["consent"],
+};
+
+/** Human names, so the error summary reads as prose and not as field names. */
+const FIELD_LABELS: Record<string, string> = {
+  businessName: "Business name",
+  businessType: "Business type",
+  categoryFocus: "Main product category",
+  website: "Website",
+  email: "Business email",
+  phone: "Phone number",
+  city: "City",
+  area: "Area / township",
+  registrationNumber: "Business registration number",
+  directorName: "Director / owner full name",
+  directorIdType: "ID type",
+  directorIdNumber: "ID number",
+  opBankName: "Bank name",
+  opBranch: "Branch / city",
+  opAccountName: "Account holder name",
+  opAccountNumber: "Account number",
+  opMobileMoney: "Mobile money operating line",
+  reg: "Business registration certificate",
+  tax: "Tax clearance certificate",
+  id: "Director ID",
+  consent: "The declaration",
+};
 
 export interface KycFormState {
   businessName: string;
@@ -196,16 +281,19 @@ function docPayload(doc: NonNullable<KycDoc>, label: string): ApplicationDocumen
 function UploadSlot({
   slot,
   doc,
+  error,
   onFile,
 }: {
   slot: { key: string; label: string; hint: string };
   doc: KycDoc;
+  /** Set when Continue was pressed without a usable file in this slot. */
+  error?: string;
   onFile: (key: string, file: File | undefined) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   return (
-    <div className={`doc-slot${doc && !doc.error ? " doc-ok" : ""}`}>
+    <div className={`doc-slot${doc && !doc.error ? " doc-ok" : ""}${error ? " doc-error" : ""}`}>
       <input
         ref={inputRef}
         type="file"
@@ -230,6 +318,7 @@ function UploadSlot({
               : `${doc.name} · ${doc.size} ${doc.uploading ? "— uploading…" : doc.url ? "— uploaded ✓" : "— added ✓"}`
             : slot.hint}
         </div>
+        <FieldError error={error} field={slot.key} />
       </div>
       <button type="button" className="btn btn-outline btn-sm" onClick={() => inputRef.current?.click()}>
         {doc ? "Replace" : <><Upload size={14} /> Upload</>}
@@ -271,10 +360,13 @@ export default function SupplierKycWizard({
   const [docs, setDocs] = useState<Record<string, KycDoc>>(
     initialDocs ?? { reg: null, tax: null, id: null },
   );
-  const [tried, setTried] = useState(false);
+  // Empty until the user tries to continue; then every problem on this step.
+  const [errors, setErrors] = useState<FieldErrors>({});
 
-  const set = <K extends keyof KycFormState>(key: K, value: KycFormState[K]) =>
+  const set = <K extends keyof KycFormState>(key: K, value: KycFormState[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
+    recheck(key, value);
+  };
 
   async function handleFile(key: string, file: File | undefined) {
     if (!file) return;
@@ -320,47 +412,77 @@ export default function SupplierKycWizard({
     onUploadError?.(file.name, result.error);
   }
 
-  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email);
   const resubmit = mode === "resubmit";
 
-  function stepInvalid(): boolean {
-    switch (step) {
-      case 1:
-        return !form.businessName.trim() || !form.businessType || !form.categoryFocus;
-      case 2:
-        return !emailOk || form.phone.trim().length < 9 || !form.city || !form.area.trim();
-      case 3:
-        return (
-          !form.registrationNumber.trim() ||
-          !form.directorName.trim() ||
-          !form.directorIdType ||
-          !form.directorIdNumber.trim() ||
-          !form.opBankName.trim() ||
-          !form.opAccountName.trim() ||
-          !form.opAccountNumber.trim()
-        );
-      case 4:
-        return docSlots.some((s) => !docs[s.key] || docs[s.key]?.uploading || docs[s.key]?.error);
-      case 5:
-        return !form.consent;
+  /**
+   * Everything wrong with the current step, as field -> message.
+   *
+   * The text fields go through the shared rules; the three document slots and
+   * the consent tick are booleans and objects, so they are checked here.
+   */
+  function validateStep(target: Step): FieldErrors {
+    const names = STEP_FIELDS[target];
+    const values: Record<string, string> = {};
+    for (const name of names) {
+      const value = form[name as keyof KycFormState];
+      if (typeof value === "string") values[name] = value;
     }
+
+    const found = collect(values, FIELD_RULES);
+
+    if (target === 4) {
+      for (const slot of docSlots) {
+        const doc = docs[slot.key];
+        if (!doc) {
+          found[slot.key] = `${slot.label} is required. Upload a PDF, PNG or JPG.`;
+        } else if (doc.uploading) {
+          found[slot.key] = "Still uploading — wait for it to finish.";
+        } else if (doc.error) {
+          found[slot.key] = doc.error;
+        }
+      }
+    }
+
+    if (target === 5 && !form.consent) {
+      found.consent = "You need to accept the declaration before submitting.";
+    }
+
+    return found;
+  }
+
+  /**
+   * Re-check one field as the user types, so a message clears as it is fixed.
+   * The new value is passed in rather than read from `form`, which is still
+   * the previous render's state at this point.
+   */
+  function recheck(field: keyof KycFormState, value: KycFormState[keyof KycFormState]): void {
+    if (!errors[field] || typeof value !== "string") return;
+    setErrors((e) => ({ ...e, ...checkOne(field, value, FIELD_RULES[field] ?? []) }));
+  }
+
+  /**
+   * Gate a step transition. On failure the messages go on screen, the summary
+   * takes focus, and nothing else happens — previously this returned quietly
+   * and the wizard looked broken.
+   */
+  function advance(): boolean {
+    const found = validateStep(step);
+    if (!ok(found)) {
+      setErrors(found);
+      return false;
+    }
+    setErrors({});
+    return true;
   }
 
   function next(): void {
-    if (stepInvalid()) {
-      setTried(true);
-      return;
-    }
-    setTried(false);
+    if (!advance()) return;
     setStep((s) => Math.min(5, s + 1) as Step);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function submit(): void {
-    if (stepInvalid()) {
-      setTried(true);
-      return;
-    }
+    if (!advance()) return;
     onSubmit({
       businessName: form.businessName.trim(),
       businessType: form.businessType,
@@ -401,6 +523,13 @@ export default function SupplierKycWizard({
       </div>
 
       <div className="apply-panel" key={step}>
+        {/* Every step reports the same way: a list of what is outstanding at
+            the top of the panel, plus a message under each offending field. */}
+        <ErrorSummary
+          errors={errors}
+          order={STEP_FIELDS[step].map((name) => FIELD_LABELS[name] ?? name)}
+        />
+
         {/* Step 1 — business */}
         {step === 1 && (
           <>
@@ -409,29 +538,39 @@ export default function SupplierKycWizard({
             </h3>
             <label className="field">
               <span>Business name *</span>
-              <input className="input" placeholder="e.g. Mzuzu Medical Distributors" value={form.businessName}
-                onChange={(e) => set("businessName", e.target.value)} />
+              <input placeholder="e.g. Mzuzu Medical Distributors" value={form.businessName}
+                onChange={(e) => set("businessName", e.target.value)} {...invalidProps(errors, "businessName", "input")} />
+              <FieldError error={errors.businessName} field="businessName" />
             </label>
             <label className="field">
               <span>Business type *</span>
-              <select className="select" value={form.businessType}
-                onChange={(e) => set("businessType", e.target.value)}>
+              <select value={form.businessType}
+                onChange={(e) => set("businessType", e.target.value)} {...invalidProps(errors, "businessType", "select")}>
                 <option value="">Select a business type…</option>
                 {businessTypes.map((b) => <option key={b} value={b}>{b}</option>)}
               </select>
+              <FieldError error={errors.businessType} field="businessType" />
             </label>
             <label className="field">
               <span>Main product category *</span>
-              <select className="select" value={form.categoryFocus}
-                onChange={(e) => set("categoryFocus", e.target.value)}>
+              <select value={form.categoryFocus}
+                onChange={(e) => set("categoryFocus", e.target.value)} {...invalidProps(errors, "categoryFocus", "select")}>
                 <option value="">Select the category you sell in…</option>
                 {categories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
               </select>
+              <FieldError error={errors.categoryFocus} field="categoryFocus" />
+              {categories.length === 0 && (
+                <em className="muted xs" style={{ fontStyle: "normal" }}>
+                  No categories are set up yet. A MedLink administrator adds them at Categories in the admin
+                  console — please contact us and we will add yours.
+                </em>
+              )}
             </label>
             <label className="field">
               <span>Website <em className="muted">(optional)</em></span>
-              <input className="input" placeholder="yourbusiness.mw" value={form.website}
-                onChange={(e) => set("website", e.target.value)} />
+              <input placeholder="yourbusiness.mw" value={form.website}
+                onChange={(e) => set("website", e.target.value)} {...invalidProps(errors, "website", "input")} />
+              <FieldError error={errors.website} field="website" />
             </label>
           </>
         )}
@@ -444,10 +583,10 @@ export default function SupplierKycWizard({
             </h3>
             <label className="field">
               <span>Business email *</span>
-              <input className="input" type="email" placeholder="sales@yourbusiness.mw" value={form.email}
-                onChange={(e) => set("email", e.target.value)} />
-              {tried && !emailOk && <em className="field-err">Enter a valid email address.</em>}
-              {resubmit && !tried && (
+              <input type="email" placeholder="sales@yourbusiness.mw" value={form.email}
+                onChange={(e) => set("email", e.target.value)} {...invalidProps(errors, "email", "input")} />
+              <FieldError error={errors.email} field="email" />
+              {resubmit && !errors.email && (
                 <em className="muted xs" style={{ fontStyle: "normal" }}>
                   This is the email you sign in with, so keep it as it is.
                 </em>
@@ -455,22 +594,25 @@ export default function SupplierKycWizard({
             </label>
             <label className="field">
               <span>Phone number *</span>
-              <input className="input" placeholder="+265 99X XXX XXX" value={form.phone}
-                onChange={(e) => set("phone", e.target.value)} />
-              {tried && form.phone.trim().length < 9 && <em className="field-err">Enter a valid phone number.</em>}
+              <input inputMode="tel" placeholder="0991 234 567" value={form.phone}
+                onChange={(e) => set("phone", e.target.value)} {...invalidProps(errors, "phone", "input")} />
+              <FieldError error={errors.phone} field="phone" />
             </label>
             <div className="split field-split">
               <label className="field">
                 <span>City *</span>
-                <select className="select" value={form.city} onChange={(e) => set("city", e.target.value)}>
+                <select value={form.city} onChange={(e) => set("city", e.target.value)}
+                  {...invalidProps(errors, "city", "select")}>
                   <option value="">Select city…</option>
                   {cities.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
+                <FieldError error={errors.city} field="city" />
               </label>
               <label className="field">
                 <span>Area / township *</span>
-                <input className="input" placeholder="e.g. Kanengo" value={form.area}
-                  onChange={(e) => set("area", e.target.value)} />
+                <input placeholder="e.g. Kanengo" value={form.area}
+                  onChange={(e) => set("area", e.target.value)} {...invalidProps(errors, "area", "input")} />
+                <FieldError error={errors.area} field="area" />
               </label>
             </div>
           </>
@@ -491,27 +633,33 @@ export default function SupplierKycWizard({
             </div>
             <label className="field">
               <span>Business registration number *</span>
-              <input className="input" placeholder="e.g. MLR-2024-01874" value={form.registrationNumber}
-                onChange={(e) => set("registrationNumber", e.target.value)} />
+              <input placeholder="e.g. MLR-2024-01874" value={form.registrationNumber}
+                onChange={(e) => set("registrationNumber", e.target.value)}
+                {...invalidProps(errors, "registrationNumber", "input")} />
+              <FieldError error={errors.registrationNumber} field="registrationNumber" />
             </label>
             <label className="field">
               <span>Director / owner full name *</span>
-              <input className="input" placeholder="Full legal name" value={form.directorName}
-                onChange={(e) => set("directorName", e.target.value)} />
+              <input placeholder="Full legal name" value={form.directorName}
+                onChange={(e) => set("directorName", e.target.value)} {...invalidProps(errors, "directorName", "input")} />
+              <FieldError error={errors.directorName} field="directorName" />
             </label>
             <div className="split field-split">
               <label className="field">
                 <span>ID type *</span>
-                <select className="select" value={form.directorIdType}
-                  onChange={(e) => set("directorIdType", e.target.value)}>
+                <select value={form.directorIdType}
+                  onChange={(e) => set("directorIdType", e.target.value)} {...invalidProps(errors, "directorIdType", "select")}>
                   <option value="">Select…</option>
                   {directorIdTypes.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
+                <FieldError error={errors.directorIdType} field="directorIdType" />
               </label>
               <label className="field">
                 <span>ID number *</span>
-                <input className="input" placeholder="ID / passport number" value={form.directorIdNumber}
-                  onChange={(e) => set("directorIdNumber", e.target.value)} />
+                <input placeholder="ID / passport number" value={form.directorIdNumber}
+                  onChange={(e) => set("directorIdNumber", e.target.value)}
+                  {...invalidProps(errors, "directorIdNumber", "input")} />
+                <FieldError error={errors.directorIdNumber} field="directorIdNumber" />
               </label>
             </div>
 
@@ -527,29 +675,37 @@ export default function SupplierKycWizard({
               <div className="split field-split">
                 <label className="field">
                   <span>Bank name *</span>
-                  <input className="input" placeholder="e.g. National Bank of Malawi" value={form.opBankName}
-                    onChange={(e) => set("opBankName", e.target.value)} />
+                  <input placeholder="e.g. National Bank of Malawi" value={form.opBankName}
+                    onChange={(e) => set("opBankName", e.target.value)} {...invalidProps(errors, "opBankName", "input")} />
+                  <FieldError error={errors.opBankName} field="opBankName" />
                 </label>
                 <label className="field">
                   <span>Branch / city *</span>
-                  <input className="input" placeholder="Branch (e.g. Capital City)" value={form.opBranch}
-                    onChange={(e) => set("opBranch", e.target.value)} />
+                  <input placeholder="Branch (e.g. Capital City)" value={form.opBranch}
+                    onChange={(e) => set("opBranch", e.target.value)} {...invalidProps(errors, "opBranch", "input")} />
+                  <FieldError error={errors.opBranch} field="opBranch" />
                 </label>
               </div>
               <label className="field">
                 <span>Account holder name *</span>
-                <input className="input" placeholder="Operating account name" value={form.opAccountName}
-                  onChange={(e) => set("opAccountName", e.target.value)} />
+                <input placeholder="Operating account name" value={form.opAccountName}
+                  onChange={(e) => set("opAccountName", e.target.value)}
+                  {...invalidProps(errors, "opAccountName", "input")} />
+                <FieldError error={errors.opAccountName} field="opAccountName" />
               </label>
               <label className="field">
                 <span>Account number *</span>
-                <input className="input" placeholder="Operating account number" value={form.opAccountNumber}
-                  onChange={(e) => set("opAccountNumber", e.target.value)} />
+                <input placeholder="Operating account number" value={form.opAccountNumber}
+                  onChange={(e) => set("opAccountNumber", e.target.value)}
+                  {...invalidProps(errors, "opAccountNumber", "input")} />
+                <FieldError error={errors.opAccountNumber} field="opAccountNumber" />
               </label>
               <label className="field">
-                <span>Mobile money operating line (optional)</span>
-                <input className="input" placeholder="e.g. Mpamba / Airtel Money number" value={form.opMobileMoney}
-                  onChange={(e) => set("opMobileMoney", e.target.value)} />
+                <span>Mobile money operating line <em className="muted">(optional)</em></span>
+                <input inputMode="tel" placeholder="e.g. 0991 234 567" value={form.opMobileMoney}
+                  onChange={(e) => set("opMobileMoney", e.target.value)}
+                  {...invalidProps(errors, "opMobileMoney", "input")} />
+                <FieldError error={errors.opMobileMoney} field="opMobileMoney" />
               </label>
             </div>
           </>
@@ -568,16 +724,19 @@ export default function SupplierKycWizard({
             </p>
             <div className="stack">
               {docSlots.map((s) => (
-                <UploadSlot key={s.key} slot={s} doc={docs[s.key]} onFile={(k, f) => void handleFile(k, f)} />
+                <UploadSlot
+                  key={s.key}
+                  slot={s}
+                  doc={docs[s.key]}
+                  error={errors[s.key]}
+                  onFile={(k, f) => {
+                    // A fresh pick clears whatever the last attempt complained about.
+                    setErrors((e) => ({ ...e, [k]: undefined }));
+                    void handleFile(k, f);
+                  }}
+                />
               ))}
             </div>
-            {tried && docSlots.some((s) => !docs[s.key] || docs[s.key]?.uploading || docs[s.key]?.error) && (
-              <p className="small red" style={{ marginTop: 10 }}>
-                {docSlots.some((s) => docs[s.key]?.error)
-                  ? "Some documents failed to upload — replace them and try again."
-                  : "Please upload all three documents."}
-              </p>
-            )}
           </>
         )}
 
@@ -620,22 +779,31 @@ export default function SupplierKycWizard({
                 ))}
               </div>
             </div>
-            <label className="consent-row">
+            <label className={`consent-row${errors.consent ? " consent-row-error" : ""}`}>
               <input type="checkbox" checked={form.consent}
-                onChange={(e) => set("consent", e.target.checked)} />
+                aria-invalid={errors.consent ? true : undefined}
+                aria-describedby={errors.consent ? "consent-error" : undefined}
+                onChange={(e) => {
+                  set("consent", e.target.checked);
+                  if (e.target.checked) setErrors((prev) => ({ ...prev, consent: undefined }));
+                }} />
               <span className="small">
                 I confirm the information provided is accurate and consent to MedLink performing KYC checks on
                 my business and director identity. I understand false information will result in rejection.
               </span>
             </label>
-            {tried && !form.consent && <p className="small red">Please accept the declaration to submit.</p>}
+            <FieldError error={errors.consent} field="consent" />
           </>
         )}
       </div>
 
       <div className="apply-nav">
         {step > 1 && (
-          <button className="btn btn-outline" onClick={() => setStep((s) => (s - 1) as Step)}>
+          <button className="btn btn-outline" onClick={() => {
+            // Messages belong to the step that produced them.
+            setErrors({});
+            setStep((s) => (s - 1) as Step);
+          }}>
             <ArrowLeft size={15} /> Back
           </button>
         )}

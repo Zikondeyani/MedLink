@@ -535,6 +535,25 @@ export interface Database {
         Args: { application_ref: string };
         Returns: ApplicationStatusRow[];
       };
+      submit_supplier_application: {
+        Args: {
+          p_business_name: string;
+          p_business_type: string;
+          p_category_focus: string;
+          p_contact_email: string;
+          p_phone: string;
+          p_city: string;
+          p_area: string;
+          p_registration_number: string;
+          p_director_name: string;
+          p_director_id_type: string;
+          p_director_id_number: string;
+          p_website?: string | null;
+          p_operating_account?: Json | null;
+          p_documents?: Json;
+        };
+        Returns: SupplierApplicationRow;
+      };
       place_order: {
         Args: {
           p_items: Json;

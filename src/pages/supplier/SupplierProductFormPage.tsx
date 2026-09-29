@@ -6,6 +6,16 @@ import type { ProductSpec, ProductStatus } from "../../data/types";
 import { useToast } from "../../lib/toast";
 import { hashString } from "../../lib/format";
 import { uploadFile, useUploadOwner } from "../../lib/cloudinary";
+import {
+  collect,
+  nonNegative,
+  ok,
+  required,
+  requiredMin,
+  wholeNumber,
+  type FieldErrors,
+} from "../../lib/validate";
+import { ErrorSummary, FieldError, invalidProps } from "../../components/ui/FieldError";
 
 /** One tile in the product image grid — either uploading or holding a Cloudinary URL. */
 type ImageSlot = {
@@ -51,6 +61,9 @@ export default function SupplierProductFormPage() {
     unit: editing?.unit ?? "unit",
     status: editing?.status ?? "active",
   });
+  // Inline messages, shown once the supplier tries to save.
+  const [errors, setErrors] = useState<FieldErrors>({});
+
   const [specs, setSpecs] = useState<ProductSpec[]>(
     editing?.specs ?? [
       { label: "Brand", value: "" },
@@ -104,6 +117,34 @@ export default function SupplierProductFormPage() {
     );
   }
 
+  /** Everything wrong with the product, so the save is refused with a reason. */
+  function validate(): FieldErrors {
+    const found = collect(
+      {
+        name: form.name,
+        categoryId: form.categoryId,
+        description: form.description,
+        price: form.price,
+        stock: form.stock,
+        sku: form.sku,
+      },
+      {
+        name: [requiredMin("Product name", 3)],
+        categoryId: [required("Category")],
+        description: [requiredMin("Description", 10)],
+        price: [nonNegative("Price")],
+        stock: [wholeNumber("Stock quantity")],
+        sku: [requiredMin("SKU", 2)],
+      },
+    );
+    // A category that no longer exists (a row deleted at /admin/categories)
+    // would otherwise be sent as a dangling foreign key.
+    if (form.categoryId && !categories.some((c) => c.id === form.categoryId)) {
+      found.categoryId = "That category is no longer available. Pick another one.";
+    }
+    return found;
+  }
+
   /**
    * Write the product for real. Only the URL of each uploaded photo is stored —
    * the file itself stays in this supplier's Cloudinary folder.
@@ -111,6 +152,10 @@ export default function SupplierProductFormPage() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (saving) return;
+
+    const found = validate();
+    setErrors(found);
+    if (!ok(found)) return;
 
     const urls = images.filter((img) => img.url && !img.uploading).map((img) => img.url as string);
     const input = {
@@ -129,15 +174,6 @@ export default function SupplierProductFormPage() {
       image: urls[0],
       images: urls,
     };
-
-    if (!Number.isFinite(input.price) || input.price < 0) {
-      push({ title: "Check the price", message: "Enter a price of 0 or more.", icon: "error" });
-      return;
-    }
-    if (!Number.isFinite(input.stock) || input.stock < 0) {
-      push({ title: "Check the stock", message: "Enter a stock quantity of 0 or more.", icon: "error" });
-      return;
-    }
 
     setSaving(true);
     const result = editing
@@ -180,21 +216,28 @@ export default function SupplierProductFormPage() {
         </div>
       </div>
 
-      <form onSubmit={submit} className="stack">
+      <form onSubmit={submit} className="stack" noValidate>
+        <ErrorSummary
+          errors={errors}
+          order={["Product name", "Category", "Description", "Price", "Stock quantity", "SKU"]}
+        />
         <div className="card card-pad">
           <h3 className="h-card" style={{ marginBottom: 16 }}>Product details</h3>
           <div className="form-grid">
             <div className="field full">
               <label className="label" htmlFor="fname">Product name</label>
-              <input id="fname" className="input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Digital Blood Pressure Monitor" />
+              <input id="fname" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Digital Blood Pressure Monitor" {...invalidProps(errors, "name", "input")} />
+              <FieldError error={errors.name} field="fname" />
             </div>
             <div className="field">
               <label className="label" htmlFor="fcat">Category</label>
-              <select id="fcat" className="select" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
+              <select id="fcat" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} {...invalidProps(errors, "categoryId", "select")}>
+                <option value="">Select a category…</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
+              <FieldError error={errors.categoryId} field="fcat" />
             </div>
             <div className="field">
               <label className="label" htmlFor="fstatus">Status</label>
@@ -206,7 +249,8 @@ export default function SupplierProductFormPage() {
             </div>
             <div className="field full">
               <label className="label" htmlFor="fdesc">Description</label>
-              <textarea id="fdesc" className="textarea" required value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Describe the product, its use and key features..." />
+              <textarea id="fdesc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Describe the product, its use and key features..." {...invalidProps(errors, "description", "textarea")} />
+              <FieldError error={errors.description} field="fdesc" />
             </div>
           </div>
         </div>
@@ -216,15 +260,18 @@ export default function SupplierProductFormPage() {
           <div className="form-grid">
             <div className="field">
               <label className="label" htmlFor="fprice">Price (MWK)</label>
-              <input id="fprice" className="input" type="number" min={0} required value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="85000" />
+              <input id="fprice" type="number" min={0} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="85000" {...invalidProps(errors, "price", "input")} />
+              <FieldError error={errors.price} field="fprice" />
             </div>
             <div className="field">
               <label className="label" htmlFor="fstock">Stock quantity</label>
-              <input id="fstock" className="input" type="number" min={0} required value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
+              <input id="fstock" type="number" min={0} value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} {...invalidProps(errors, "stock", "input")} />
+              <FieldError error={errors.stock} field="fstock" />
             </div>
             <div className="field">
               <label className="label" htmlFor="fsku">SKU</label>
-              <input id="fsku" className="input" required value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} placeholder="ME-BPM-003" />
+              <input id="fsku" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} placeholder="ME-BPM-003" {...invalidProps(errors, "sku", "input")} />
+              <FieldError error={errors.sku} field="fsku" />
             </div>
             <div className="field">
               <label className="label" htmlFor="funit">Unit of sale</label>

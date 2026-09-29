@@ -3,6 +3,8 @@ import { ArrowRight, Loader2, LogIn, LockKeyhole, Mail, ShieldCheck, User, UserP
 import { Link, useNavigate } from "react-router-dom";
 import { roleHomePath, roleLabel, useAuth } from "../lib/auth";
 import { useToast } from "../lib/toast";
+import { collect, ok, passwordsMatch, requiredEmail, requiredMin, type FieldErrors } from "../lib/validate";
+import { ErrorSummary, FieldError, wrappedInvalidProps } from "../components/ui/FieldError";
 
 type Mode = "signup" | "signin";
 
@@ -17,39 +19,59 @@ export default function SignUpPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
-  const [tried, setTried] = useState(false);
+  // Empty until the user presses the button, then every problem on the form.
+  const [errors, setErrors] = useState<FieldErrors>({});
   const [pending, setPending] = useState(false);
-
-  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
   function switchMode(m: Mode): void {
     setMode(m);
     setError("");
-    setTried(false);
+    setErrors({});
     setPassword("");
     setConfirm("");
   }
 
+  /** Everything wrong with the form in its current mode. */
+  function validate(): FieldErrors {
+    if (mode === "signup") {
+      const found = collect(
+        {
+          name,
+          email,
+          password,
+          confirm,
+        },
+        {
+          name: [requiredMin("Full name", 2)],
+          email: [requiredEmail()],
+          password: [requiredMin("Password", 6)],
+        },
+      );
+      const mismatch = passwordsMatch(password, confirm);
+      if (mismatch) found.confirm = mismatch;
+      else if (!confirm.trim()) found.confirm = "Confirm your password.";
+      return found;
+    }
+    return collect(
+      { email, password },
+      { email: [requiredEmail()], password: [requiredMin("Password", 6)] },
+    );
+  }
+
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
-    setTried(true);
+
+    // The gate: report every problem and stop, rather than setting one
+    // form-level sentence and returning on the first failure.
+    const found = validate();
+    setErrors(found);
+    if (!ok(found)) {
+      setError("");
+      return;
+    }
+    setError("");
+
     if (mode === "signup") {
-      if (name.trim().length < 2) {
-        setError("Enter your full name.");
-        return;
-      }
-      if (!emailOk) {
-        setError("Enter a valid email address.");
-        return;
-      }
-      if (password.trim().length < 6) {
-        setError("Password must be at least 6 characters.");
-        return;
-      }
-      if (password !== confirm) {
-        setError("Passwords do not match.");
-        return;
-      }
       setPending(true);
       // The account is created with the customer role. The role travels in the
       // sign-up metadata, and the database trigger is what actually stores it —
@@ -81,16 +103,8 @@ export default function SignUpPage() {
       return;
     }
     // Sign-in mode
-    if (!emailOk) {
-      setError("Enter a valid email address.");
-      return;
-    }
-    if (password.trim().length < 6) {
-      setError("Password must be at least 6 characters.");
-      return;
-    }
     setPending(true);
-    const result = await signIn(email, password);
+    const result = await signIn(email.trim(), password);
     setPending(false);
     if (!result.ok) {
       setError(result.error);
@@ -134,47 +148,59 @@ export default function SignUpPage() {
         </div>
 
         <form onSubmit={submit} noValidate>
+          <ErrorSummary
+            errors={errors}
+            order={mode === "signup" ? ["name", "email", "password", "confirm"] : ["email", "password"]}
+          />
+
           {mode === "signup" && (
             <>
               <div className="grid field-split">
                 <label className="field">
                   <span>Full name *</span>
-                  <div className="input-wrap">
+                  <div {...wrappedInvalidProps(errors, "name")}>
                     <User size={16} className="muted" />
                     <input className="input" placeholder="e.g. Thandiwe Banda" value={name}
-                      onChange={(e) => setName(e.target.value)} aria-label="Full name" />
+                      onChange={(e) => setName(e.target.value)} aria-label="Full name"
+                      aria-invalid={errors.name ? true : undefined}
+                      aria-describedby={errors.name ? "name-error" : undefined} />
                   </div>
-                  {tried && name.trim().length < 2 && <em className="field-err">Enter your full name.</em>}
+                  <FieldError error={errors.name} field="name" />
                 </label>
                 <label className="field">
                   <span>Email *</span>
-                  <div className="input-wrap">
+                  <div {...wrappedInvalidProps(errors, "email")}>
                     <Mail size={16} className="muted" />
                     <input className="input" type="email" placeholder="you@facility.mw" value={email}
-                      onChange={(e) => setEmail(e.target.value)} aria-label="Email address" />
+                      onChange={(e) => setEmail(e.target.value)} aria-label="Email address"
+                      aria-invalid={errors.email ? true : undefined}
+                      aria-describedby={errors.email ? "email-error" : undefined} />
                   </div>
-                  {tried && !emailOk && <em className="field-err">Enter a valid email address.</em>}
+                  <FieldError error={errors.email} field="email" />
                 </label>
               </div>
               <div className="grid field-split">
                 <label className="field">
                   <span>Password *</span>
-                  <div className="input-wrap">
+                  <div {...wrappedInvalidProps(errors, "password")}>
                     <LockKeyhole size={16} className="muted" />
                     <input className="input" type="password" placeholder="At least 6 characters" value={password}
-                      onChange={(e) => setPassword(e.target.value)} aria-label="Password" />
+                      onChange={(e) => setPassword(e.target.value)} aria-label="Password"
+                      aria-invalid={errors.password ? true : undefined}
+                      aria-describedby={errors.password ? "password-error" : undefined} />
                   </div>
+                  <FieldError error={errors.password} field="password" />
                 </label>
                 <label className="field">
                   <span>Confirm password *</span>
-                  <div className="input-wrap">
+                  <div {...wrappedInvalidProps(errors, "confirm")}>
                     <LockKeyhole size={16} className="muted" />
                     <input className="input" type="password" placeholder="Repeat your password" value={confirm}
-                      onChange={(e) => setConfirm(e.target.value)} aria-label="Confirm password" />
+                      onChange={(e) => setConfirm(e.target.value)} aria-label="Confirm password"
+                      aria-invalid={errors.confirm ? true : undefined}
+                      aria-describedby={errors.confirm ? "confirm-error" : undefined} />
                   </div>
-                  {tried && confirm.length > 0 && password !== confirm && (
-                    <em className="field-err">Passwords do not match.</em>
-                  )}
+                  <FieldError error={errors.confirm} field="confirm" />
                 </label>
               </div>
             </>
@@ -184,20 +210,25 @@ export default function SignUpPage() {
             <>
               <label className="field">
                 <span>Email *</span>
-                <div className="input-wrap">
+                <div {...wrappedInvalidProps(errors, "email")}>
                   <Mail size={16} className="muted" />
                   <input className="input" type="email" placeholder="you@facility.mw" value={email}
-                    onChange={(e) => setEmail(e.target.value)} aria-label="Email address" />
+                    onChange={(e) => setEmail(e.target.value)} aria-label="Email address"
+                    aria-invalid={errors.email ? true : undefined}
+                    aria-describedby={errors.email ? "email-error" : undefined} />
                 </div>
-                {tried && !emailOk && <em className="field-err">Enter a valid email address.</em>}
+                <FieldError error={errors.email} field="email" />
               </label>
               <label className="field">
                 <span>Password *</span>
-                <div className="input-wrap">
+                <div {...wrappedInvalidProps(errors, "password")}>
                   <LockKeyhole size={16} className="muted" />
                   <input className="input" type="password" placeholder="Your password" value={password}
-                    onChange={(e) => setPassword(e.target.value)} aria-label="Password" />
+                    onChange={(e) => setPassword(e.target.value)} aria-label="Password"
+                    aria-invalid={errors.password ? true : undefined}
+                    aria-describedby={errors.password ? "password-error" : undefined} />
                 </div>
+                <FieldError error={errors.password} field="password" />
               </label>
             </>
           )}

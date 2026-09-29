@@ -4,6 +4,8 @@ import { Link, useNavigate } from "react-router-dom";
 import Modal from "../ui/Modal";
 import { useAuth, roleHomePath, roleLabel } from "../../lib/auth";
 import { useToast } from "../../lib/toast";
+import { collect, ok, requiredEmail, requiredMin, type FieldErrors } from "../../lib/validate";
+import { FieldError, invalidProps } from "../ui/FieldError";
 
 export default function SignInModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { signIn } = useAuth();
@@ -11,23 +13,24 @@ export default function SignInModal({ open, onClose }: { open: boolean; onClose:
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // Wrong credentials are a form-level failure; anything the user can fix by
+  // retyping belongs next to the field.
   const [error, setError] = useState("");
+  const [errors, setErrors] = useState<FieldErrors>({});
   const [pending, setPending] = useState(false);
 
-  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-
   async function submit(): Promise<void> {
-    if (!emailOk) {
-      setError("Enter a valid email address.");
-      return;
-    }
-    if (password.trim().length < 6) {
-      setError("Password must be at least 6 characters.");
-      return;
-    }
+    setError("");
+    const found = collect(
+      { email, password },
+      { email: [requiredEmail()], password: [requiredMin("Password", 6)] },
+    );
+    setErrors(found);
+    if (!ok(found)) return;
+
     setPending(true);
     // Role comes from the account, not from anything typed here.
-    const result = await signIn(email, password);
+    const result = await signIn(email.trim(), password);
     setPending(false);
     if (!result.ok) {
       setError(result.error);
@@ -43,6 +46,7 @@ export default function SignInModal({ open, onClose }: { open: boolean; onClose:
     setEmail("");
     setPassword("");
     setError("");
+    setErrors({});
     onClose();
   }
 
@@ -66,33 +70,39 @@ export default function SignInModal({ open, onClose }: { open: boolean; onClose:
           Track your orders, save addresses and reorder faster — one account for everything.
         </p>
 
-        <label className="row" style={{ alignItems: "center", position: "relative" }}>
-          <Mail size={16} className="muted" style={{ position: "absolute", left: 12 }} />
-          <input
-            className="input"
-            style={{ paddingLeft: 38 }}
-            type="email"
-            placeholder="you@facility.mw"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            aria-label="Email address"
-          />
-        </label>
-        <label className="row" style={{ alignItems: "center", position: "relative" }}>
-          <LockKeyhole size={16} className="muted" style={{ position: "absolute", left: 12 }} />
-          <input
-            className="input"
-            style={{ paddingLeft: 38 }}
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void submit();
-            }}
-            aria-label="Password"
-          />
-        </label>
+        <div>
+          <label className="row" style={{ alignItems: "center", position: "relative" }}>
+            <Mail size={16} className="muted" style={{ position: "absolute", left: 12 }} />
+            <input
+              style={{ paddingLeft: 38 }}
+              type="email"
+              placeholder="you@facility.mw"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              aria-label="Email address"
+              {...invalidProps(errors, "email", "input")}
+            />
+          </label>
+          <FieldError error={errors.email} field="email" />
+        </div>
+        <div>
+          <label className="row" style={{ alignItems: "center", position: "relative" }}>
+            <LockKeyhole size={16} className="muted" style={{ position: "absolute", left: 12 }} />
+            <input
+              style={{ paddingLeft: 38 }}
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submit();
+              }}
+              aria-label="Password"
+              {...invalidProps(errors, "password", "input")}
+            />
+          </label>
+          <FieldError error={errors.password} field="password" />
+        </div>
         {error && <p className="small red">{error}</p>}
 
         <div className="auth-or"><span>or</span></div>

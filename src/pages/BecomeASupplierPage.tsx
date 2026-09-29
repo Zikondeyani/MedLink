@@ -21,6 +21,8 @@ import {
   type SupplierApplicationInput,
 } from "../lib/onboarding";
 import { useToast } from "../lib/toast";
+import { ok, passwordsMatch, type FieldErrors } from "../lib/validate";
+import { ErrorSummary, FieldError, invalidProps } from "../components/ui/FieldError";
 import SupplierKycWizard from "../components/supplier/SupplierKycWizard";
 
 /** The three things a new supplier account needs, and nothing else. */
@@ -30,8 +32,7 @@ const kycSteps = [
   { label: "Store live", desc: "You're verified and can start listing products instantly." },
 ];
 
-export default function BecomeASupplierPage() {
-  const { push } = useToast();
+export default function BecomeASupplierPage() {  const { push } = useToast();
   const { signUp } = useAuth();
   const navigate = useNavigate();
 
@@ -41,28 +42,29 @@ export default function BecomeASupplierPage() {
   const [draft, setDraft] = useState<SupplierApplicationInput | null>(null);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [tried, setTried] = useState(false);
+  // Empty until they press the button, then every problem with the pair.
+  const [errors, setErrors] = useState<FieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<SupplierApplication | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
 
   /* -------------------- Step 6: create the account -------------------- */
 
-  const passwordProblem = (): string | null => {
-    if (password.trim().length < 6) return "Use at least 6 characters.";
-    if (password !== confirm) return "The two passwords do not match.";
-    return null;
-  };
-
   async function createAccount(): Promise<void> {
     if (!draft) return;
-    const problem = passwordProblem();
-    if (problem) {
-      setTried(true);
-      return;
-    }
 
-    setTried(false);
+    // Report both problems at once: a short password *and* a mismatched
+    // confirmation should not need two attempts to discover.
+    const found: FieldErrors = {};
+    if (password.trim().length < 6) {
+      found.password = "Use at least 6 characters.";
+    }
+    const mismatch = passwordsMatch(password, confirm);
+    if (mismatch) found.confirm = mismatch;
+    else if (!confirm.trim()) found.confirm = "Confirm your password.";
+    setErrors(found);
+    if (!ok(found)) return;
+
     setSubmitting(true);
     setAccountError(null);
 
@@ -185,6 +187,8 @@ export default function BecomeASupplierPage() {
               </div>
 
               <div className="apply-panel">
+                <ErrorSummary errors={errors} order={["Password", "Confirm password"]} />
+
                 <h3 className="h-card row" style={{ gap: 8 }}>
                   <KeyRound size={18} className="teal" /> Create your supplier sign-in
                 </h3>
@@ -203,29 +207,28 @@ export default function BecomeASupplierPage() {
                 <label className="field">
                   <span>Password *</span>
                   <input
-                    className="input"
                     type="password"
                     placeholder="At least 6 characters"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     autoComplete="new-password"
+                    aria-label="Password"
+                    {...invalidProps(errors, "password", "input")}
                   />
-                  {tried && password.trim().length < 6 && <em className="field-err">Use at least 6 characters.</em>}
+                  <FieldError error={errors.password} field="password" />
                 </label>
                 <label className="field">
                   <span>Confirm password *</span>
                   <input
-                    className="input"
                     type="password"
                     placeholder="Repeat your password"
                     value={confirm}
                     onChange={(e) => setConfirm(e.target.value)}
                     autoComplete="new-password"
                     aria-label="Confirm password"
+                    {...invalidProps(errors, "confirm", "input")}
                   />
-                  {tried && confirm.length > 0 && password !== confirm && (
-                    <em className="field-err">The two passwords do not match.</em>
-                  )}
+                  <FieldError error={errors.confirm} field="confirm" />
                 </label>
 
                 {accountError && (
@@ -311,7 +314,7 @@ export default function BecomeASupplierPage() {
               setDraft(input);
               setPassword("");
               setConfirm("");
-              setTried(false);
+              setErrors({});
               setAccountError(null);
               setStage("account");
               window.scrollTo({ top: 0, behavior: "smooth" });

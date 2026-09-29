@@ -23,6 +23,20 @@ import CheckoutSummary from "../components/marketplace/CheckoutSummary";
 import ProductImage from "../components/ui/ProductImage";
 import { SupplierAvatar } from "../components/marketplace/SupplierCard";
 import { getSupplierById } from "../lib/registry";
+import {
+  cardCvc,
+  cardExpiry,
+  cardNumber,
+  collect,
+  mobileMoney,
+  ok,
+  required,
+  requiredMin,
+  validPhone,
+  type FieldErrors,
+  type Rule,
+} from "../lib/validate";
+import { ErrorSummary, FieldError, invalidProps } from "../components/ui/FieldError";
 
 const steps = ["Delivery", "Delivery Fee", "Payment", "Review"] as const;
 type Step = (typeof steps)[number];
@@ -75,7 +89,7 @@ export default function CheckoutPage() {
       instructions: saved?.instructions ?? "",
     };
   });
-  const [errors, setErrors] = useState<Partial<Record<keyof DeliveryAddress, string>>>({});
+  const [errors, setErrors] = useState<FieldErrors>({});
 
   const [payment, setPayment] = useState<PaymentFields>({
     method: "Mobile Money",
@@ -85,7 +99,9 @@ export default function CheckoutPage() {
     cardCvc: "",
     bankRef: "",
   });
-  const [paymentError, setPaymentError] = useState("");
+  // Per-field, not one form-level sentence: "Enter a valid card number" used
+  // to appear above the three card boxes without saying which one was wrong.
+  const [paymentErrors, setPaymentErrors] = useState<FieldErrors>({});
 
   // The estimate is whatever the stores in this cart promise, so pass their ids.
   const cartSupplierIds = useMemo(() => summary.groups.map((g) => g.supplierId), [summary.groups]);
@@ -96,29 +112,47 @@ export default function CheckoutPage() {
   const stepIndex = steps.indexOf(step);
 
   const validateAddress = (): boolean => {
-    const next: Partial<Record<keyof DeliveryAddress, string>> = {};
-    if (!address.fullName.trim()) next.fullName = "Full name is required";
-    if (!address.phone.trim()) next.phone = "Phone number is required";
-    if (!address.address.trim()) next.address = "Delivery address is required";
-    if (!address.city.trim()) next.city = "City is required";
-    if (!address.area.trim()) next.area = "Area is required";
+    const next = collect(
+      {
+        fullName: address.fullName,
+        phone: address.phone,
+        address: address.address,
+        city: address.city,
+        area: address.area,
+      },
+      {
+        fullName: [requiredMin("Full name", 2)],
+        phone: [validPhone()],
+        address: [required("Delivery address")],
+        city: [required("City")],
+        area: [required("Area / Zone")],
+      },
+    );
     setErrors(next);
-    return Object.keys(next).length === 0;
+    return ok(next);
   };
 
+  /** Only the fields the chosen method actually collects. */
   const validatePayment = (): boolean => {
-    let error = "";
-    if (payment.method === "Mobile Money" && onlyDigits(payment.mobileNumber).length < 9) {
-      error = "Enter a valid mobile money number.";
+    const values: Record<string, string> = {};
+    const rules: Record<string, Rule[]> = {};
+    if (payment.method === "Mobile Money") {
+      values.mobileNumber = payment.mobileNumber;
+      rules.mobileNumber = [required("Mobile Money number"), mobileMoney()];
     } else if (payment.method === "Bank Card") {
-      if (onlyDigits(payment.cardNumber).length < 12) error = "Enter a valid card number.";
-      else if (!payment.cardExpiry.trim()) error = "Enter the card expiry date.";
-      else if (!/^\d{3,4}$/.test(payment.cardCvc.trim())) error = "Enter a valid card security code.";
-    } else if (payment.method === "Bank Transfer" && payment.bankRef.trim().length < 3) {
-      error = "Enter the account name or payment reference.";
+      values.cardNumber = payment.cardNumber;
+      values.cardExpiry = payment.cardExpiry;
+      values.cardCvc = payment.cardCvc;
+      rules.cardNumber = [cardNumber()];
+      rules.cardExpiry = [cardExpiry()];
+      rules.cardCvc = [cardCvc()];
+    } else {
+      values.bankRef = payment.bankRef;
+      rules.bankRef = [requiredMin("Account name or reference", 3)];
     }
-    setPaymentError(error);
-    return !error;
+    const next = collect(values, rules);
+    setPaymentErrors(next);
+    return ok(next);
   };
 
   const next = () => {
@@ -250,36 +284,40 @@ export default function CheckoutPage() {
                 </h2>
                 <span className="badge badge-teal">Delivery by MedLink</span>
               </div>
+              <ErrorSummary
+                errors={errors}
+                order={["Full name", "Phone number", "Delivery address", "City", "Area / Zone"]}
+              />
               <div className="form-grid">
                 <div className="field">
                   <label className="label" htmlFor="fullName">Full name</label>
-                  <input id="fullName" className={`input${errors.fullName ? " field-error" : ""}`} value={address.fullName} onChange={(e) => setAddress({ ...address, fullName: e.target.value })} />
-                  {errors.fullName && <span className="error-msg">{errors.fullName}</span>}
+                  <input id="fullName" value={address.fullName} onChange={(e) => setAddress({ ...address, fullName: e.target.value })} {...invalidProps(errors, "fullName", "input")} />
+                  <FieldError error={errors.fullName} field="fullName" />
                 </div>
                 <div className="field">
                   <label className="label" htmlFor="phone">Phone number</label>
-                  <input id="phone" className={`input${errors.phone ? " field-error" : ""}`} value={address.phone} onChange={(e) => setAddress({ ...address, phone: e.target.value })} placeholder="+265 ..." />
-                  {errors.phone && <span className="error-msg">{errors.phone}</span>}
+                  <input id="phone" placeholder="+265 ..." value={address.phone} onChange={(e) => setAddress({ ...address, phone: e.target.value })} {...invalidProps(errors, "phone", "input")} />
+                  <FieldError error={errors.phone} field="phone" />
                 </div>
                 <div className="field full">
                   <label className="label" htmlFor="address">Delivery address</label>
-                  <input id="address" className={`input${errors.address ? " field-error" : ""}`} value={address.address} onChange={(e) => setAddress({ ...address, address: e.target.value })} placeholder="Street / plot / house number" />
-                  {errors.address && <span className="error-msg">{errors.address}</span>}
+                  <input id="address" placeholder="Street / plot / house number" value={address.address} onChange={(e) => setAddress({ ...address, address: e.target.value })} {...invalidProps(errors, "address", "input")} />
+                  <FieldError error={errors.address} field="address" />
                 </div>
                 <div className="field">
                   <label className="label" htmlFor="city">City</label>
-                  <select id="city" className={`select${errors.city ? " field-error" : ""}`} value={address.city} onChange={(e) => setAddress({ ...address, city: e.target.value })}>
+                  <select id="city" value={address.city} onChange={(e) => setAddress({ ...address, city: e.target.value })} {...invalidProps(errors, "city", "select")}>
                     <option>Lilongwe</option>
                     <option>Blantyre</option>
                     <option>Mzuzu</option>
                     <option>Zomba</option>
                   </select>
-                  {errors.city && <span className="error-msg">{errors.city}</span>}
+                  <FieldError error={errors.city} field="city" />
                 </div>
                 <div className="field">
                   <label className="label" htmlFor="area">Area / Zone</label>
-                  <input id="area" className={`input${errors.area ? " field-error" : ""}`} value={address.area} onChange={(e) => setAddress({ ...address, area: e.target.value })} placeholder="e.g. Area 9, Chichiri" />
-                  {errors.area && <span className="error-msg">{errors.area}</span>}
+                  <input id="area" placeholder="e.g. Area 9, Chichiri" value={address.area} onChange={(e) => setAddress({ ...address, area: e.target.value })} {...invalidProps(errors, "area", "input")} />
+                  <FieldError error={errors.area} field="area" />
                 </div>
                 <div className="field full">
                   <label className="label" htmlFor="instructions">Additional delivery instructions <span>(optional)</span></label>
@@ -328,19 +366,28 @@ export default function CheckoutPage() {
                 Payments are processed by MedLink. The supplier receives payment for their products and MedLink delivers
                 your order. This is a simulated checkout — no real payment is taken.
               </p>
-              {paymentError && <p className="small red" style={{ marginBottom: 12 }}>{paymentError}</p>}
+              <ErrorSummary
+                errors={paymentErrors}
+                order={
+                  payment.method === "Mobile Money"
+                    ? ["Mobile Money number"]
+                    : payment.method === "Bank Card"
+                      ? ["Card number", "Expiry", "CVC"]
+                      : ["Account name or reference"]
+                }
+              />
               <div className="pay-methods">
-                <button className={`pay-method${payment.method === "Mobile Money" ? " pay-method-active" : ""}`} onClick={() => { setPaymentError(""); setPayment({ ...payment, method: "Mobile Money" }); }}>
+                <button className={`pay-method${payment.method === "Mobile Money" ? " pay-method-active" : ""}`} onClick={() => { setPaymentErrors({}); setPayment({ ...payment, method: "Mobile Money" }); }}>
                   <Smartphone size={20} />
                   <div className="grow"><b>Mobile Money</b><small>Airtel Money · TNM Mpamba</small></div>
                   <span className="pill-check">{payment.method === "Mobile Money" && "✓"}</span>
                 </button>
-                <button className={`pay-method${payment.method === "Bank Card" ? " pay-method-active" : ""}`} onClick={() => { setPaymentError(""); setPayment({ ...payment, method: "Bank Card" }); }}>
+                <button className={`pay-method${payment.method === "Bank Card" ? " pay-method-active" : ""}`} onClick={() => { setPaymentErrors({}); setPayment({ ...payment, method: "Bank Card" }); }}>
                   <CreditCard size={20} />
                   <div className="grow"><b>Bank Card</b><small>Visa · Mastercard</small></div>
                   <span className="pill-check">{payment.method === "Bank Card" && "✓"}</span>
                 </button>
-                <button className={`pay-method${payment.method === "Bank Transfer" ? " pay-method-active" : ""}`} onClick={() => { setPaymentError(""); setPayment({ ...payment, method: "Bank Transfer" }); }}>
+                <button className={`pay-method${payment.method === "Bank Transfer" ? " pay-method-active" : ""}`} onClick={() => { setPaymentErrors({}); setPayment({ ...payment, method: "Bank Transfer" }); }}>
                   <Landmark size={20} />
                   <div className="grow"><b>Bank Transfer</b><small>National Bank · Standard Bank · FDH</small></div>
                   <span className="pill-check">{payment.method === "Bank Transfer" && "✓"}</span>
@@ -350,29 +397,34 @@ export default function CheckoutPage() {
               {payment.method === "Mobile Money" && (
                 <div className="field" style={{ marginTop: 16 }}>
                   <label className="label" htmlFor="momnum">Mobile Money number</label>
-                  <input id="momnum" className="input" placeholder="+265 999 000 000" value={payment.mobileNumber} onChange={(e) => setPayment({ ...payment, mobileNumber: e.target.value })} />
+                  <input id="momnum" placeholder="+265 999 000 000" value={payment.mobileNumber} onChange={(e) => setPayment({ ...payment, mobileNumber: e.target.value })} {...invalidProps(paymentErrors, "mobileNumber", "input")} />
+                  <FieldError error={paymentErrors.mobileNumber} field="momnum" />
                 </div>
               )}
               {payment.method === "Bank Card" && (
                 <div className="form-grid" style={{ marginTop: 16 }}>
                   <div className="field full">
                     <label className="label" htmlFor="cardnum">Card number</label>
-                    <input id="cardnum" className="input" placeholder="4242 4242 4242 4242" value={payment.cardNumber} onChange={(e) => setPayment({ ...payment, cardNumber: e.target.value })} />
+                    <input id="cardnum" placeholder="4242 4242 4242 4242" value={payment.cardNumber} onChange={(e) => setPayment({ ...payment, cardNumber: e.target.value })} {...invalidProps(paymentErrors, "cardNumber", "input")} />
+                    <FieldError error={paymentErrors.cardNumber} field="cardnum" />
                   </div>
                   <div className="field">
                     <label className="label" htmlFor="exp">Expiry</label>
-                    <input id="exp" className="input" placeholder="MM / YY" value={payment.cardExpiry} onChange={(e) => setPayment({ ...payment, cardExpiry: e.target.value })} />
+                    <input id="exp" placeholder="MM / YY" value={payment.cardExpiry} onChange={(e) => setPayment({ ...payment, cardExpiry: e.target.value })} {...invalidProps(paymentErrors, "cardExpiry", "input")} />
+                    <FieldError error={paymentErrors.cardExpiry} field="exp" />
                   </div>
                   <div className="field">
                     <label className="label" htmlFor="cvc">CVC</label>
-                    <input id="cvc" className="input" placeholder="123" value={payment.cardCvc} onChange={(e) => setPayment({ ...payment, cardCvc: e.target.value })} />
+                    <input id="cvc" placeholder="123" value={payment.cardCvc} onChange={(e) => setPayment({ ...payment, cardCvc: e.target.value })} {...invalidProps(paymentErrors, "cardCvc", "input")} />
+                    <FieldError error={paymentErrors.cardCvc} field="cvc" />
                   </div>
                 </div>
               )}
               {payment.method === "Bank Transfer" && (
                 <div className="field" style={{ marginTop: 16 }}>
                   <label className="label" htmlFor="bankref">Account name / reference</label>
-                  <input id="bankref" className="input" placeholder="e.g. BandaCare Clinic" value={payment.bankRef} onChange={(e) => setPayment({ ...payment, bankRef: e.target.value })} />
+                  <input id="bankref" placeholder="e.g. BandaCare Clinic" value={payment.bankRef} onChange={(e) => setPayment({ ...payment, bankRef: e.target.value })} {...invalidProps(paymentErrors, "bankRef", "input")} />
+                  <FieldError error={paymentErrors.bankRef} field="bankref" />
                   <span className="xs muted">MedLink will share account details to complete the transfer.</span>
                 </div>
               )}

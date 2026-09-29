@@ -3,9 +3,71 @@
 > Update this file at the end of every response: what was done, where we left off, and next steps.
 
 ## Status: no mock data anywhere. Every page reads the real Supabase database;
-## writes go through the server (SECURITY DEFINER RPCs for money). ⏭️ NEXT: end-to-end
-## test with real accounts (supplier apply → approve → list product → order →
-## release escrow).
+## writes go through the server (SECURITY DEFINER RPCs for money). ✅ Supplier
+## apply → sign-up → store tenant verified end-to-end against the live DB
+## (2026-09-26). ⏭️ NEXT: KYC approve → list product → order → release escrow.
+
+### Session 6 — 2026-09-26: the supplier submit path unblocked (two stacked bugs)
+
+**Symptom** — `/become-a-supplier` → *Create account & submit* → toast
+"Application not stored": `permission denied for function next_application_ref`.
+
+**Bug 1 — the reference default ran as the applicant.** `supplier_applications.ref`
+defaults to `next_application_ref()`, and a column default is evaluated with the
+privileges of the role running the INSERT (`anon` on the public form).
+Migrations 0002/0003 revoked EXECUTE on that helper from `anon, authenticated`
+(they were treating it as an internal), so *every* submission died with
+`42501`. Live ACL before the fix: `{postgres, service_role}`.
+
+**Bug 2 — a guest could not read back the row it just wrote.** The wizard needs
+the row back (`RETURNING`, i.e. `.insert(...).select(...).single()`), and
+Postgres checks a returned row against the SELECT policies — `anon` has none on
+`supplier_applications` (guest rows carry contact, bank and KYC-document
+details). With bug 1 fixed first, the same click fails with
+`42501 new row violates row-level security policy`. Widening a SELECT policy
+would publish every guest application, so the write moved to the server.
+
+**Both migrations APPLIED to project `nzjfdszdpmaqtufjacuc` (Management API,
+runs as `postgres`)** — the repo files match what ran:
+
+| File | What it does |
+| --- | --- |
+| `20260926190000_fix_application_ref_privileges.sql` | `next_application_ref()` becomes SECURITY DEFINER with a pinned `search_path`; `revoke ... from public` + `grant execute ... to anon, authenticated`. |
+| `20260926200000_submit_supplier_application_rpc.sql` | New `submit_supplier_application(12 scalars + 2 jsonb)` RPC — SECURITY DEFINER, takes the applicant from `auth.uid()` (never from the caller), returns the stored row with its server-issued `ref`. The public INSERT policy is now pinned to `status = 'pending' and reviewed_at is null and reviewed_by is null`, so a caller can no longer file an application that claims to be approved. |
+
+**Client** — `src/lib/onboarding.ts` `createSupplierApplication()` now calls the
+RPC (new `submissionArgs()` maps `applicationColumns()` to the `p_*` argument
+names, so trimming/casing stays in one place); the resubmit path is unchanged.
+`src/lib/database.types.ts` gained the function signature.
+
+**Verified against the live backend (not just asserted)**
+
+- Before: `POST /rest/v1/supplier_applications` (publishable key) →
+  `401 {"code":"42501","message":"permission denied for function next_application_ref"}`.
+- After: the anon insert probe reaches the table's constraints, and
+  `POST /rest/v1/rpc/submit_supplier_application` → `200` with
+  `{"ref":"APL-2026-028", "applicant_id": null, "status": "pending", ...}`.
+- Forged status refused: a direct anon insert with `"status":"approved"` → `42501`.
+- **End-to-end wizard flow:** guest RPC → `APL-2026-030` (unowned, pending) →
+  account created with `user_metadata.role = "supplier"` → trigger claimed the
+  application (`applicant_id` set), created store `sup-36c4206de6`
+  ("Cline E2E Medical Supplies", `verified = false`) and pointed
+  `profiles.role = supplier` / `supplier_id` at it.
+- All test rows and the test auth user deleted afterwards: counts back to
+  `profiles 2 · suppliers 0 · supplier_applications 0 · auth.users 3`.
+- `npx vite build` ✅ · `npm run lint` ✅ 0 errors (42 warnings, all pre-existing).
+
+**Known limits**
+
+- Verified at the database/HTTP level with the real publishable key — no browser
+  session, so the toast itself was not re-clicked in the UI.
+- `npx tsc -b` still reports **2 pre-existing errors** in
+  `src/pages/supplier/SupplierStorePage.tsx` (unused imports at lines 14 and 24 —
+  your in-progress validation helpers, untouched here). `npm run build` runs
+  `tsc -b && vite build`, so it fails on those, not on this change.
+- Sequence gaps are expected: `next_application_ref()` mints a value even when a
+  submission later fails a constraint (refs jumped to `APL-2026-030`).
+
 
 ### Session 5 — 2026-09-26: mock data removed, every page on the real database
 

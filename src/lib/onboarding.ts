@@ -1,9 +1,9 @@
 /* ============================================================
    MedLink — supplier onboarding (KYC) backend
    The wire between the two sides of the supplier role:
-     • BecomeASupplierPage submits an application  → INSERT (public form)
-       and the applicant signs up in the same breath, so they can work
-       while the review is pending.
+     • BecomeASupplierPage submits an application  → submit_supplier_application()
+       RPC (public form) and the applicant signs up in the same breath, so
+       they can work while the review is pending.
      • SupplierVerificationPage fixes a rejection   → UPDATE own row
      • AdminApplications pages review it            → admin RPC
 
@@ -33,7 +33,7 @@ export type ApplicationResubmitResult =
   | { status: "error"; error: string };
 
 /**
- * The columns a submission owns — shared by the insert and the resubmit.
+ * The columns a submission owns — shared by the submission RPC and the resubmit.
  */
 function applicationColumns(input: SupplierApplicationInput) {
   return {
@@ -70,24 +70,51 @@ function applicationColumns(input: SupplierApplicationInput) {
   };
 }
 
+/**
+ * The same values, named the way `submit_supplier_application()` takes them.
+ * Built from `applicationColumns` so the trimming, the lower-casing and the
+ * document shape stay defined in exactly one place.
+ */
+function submissionArgs(input: SupplierApplicationInput) {
+  const columns = applicationColumns(input);
+  return {
+    p_business_name: columns.business_name,
+    p_business_type: columns.business_type,
+    p_category_focus: columns.category_focus,
+    p_website: columns.website,
+    p_contact_email: columns.contact_email,
+    p_phone: columns.phone,
+    p_city: columns.city,
+    p_area: columns.area,
+    p_registration_number: columns.registration_number,
+    p_director_name: columns.director_name,
+    p_director_id_type: columns.director_id_type,
+    p_director_id_number: columns.director_id_number,
+    p_operating_account: columns.operating_account,
+    p_documents: columns.documents,
+  };
+}
+
 const APPLICATION_SELECT =
   "id, applicant_id, ref, business_name, business_type, category_focus, website, contact_email, phone, city, area, registration_number, director_name, director_id_type, director_id_number, operating_account, documents, status, submitted_at, reviewed_at, reviewed_by, review_note";
 
-/** Submit a KYC application. Anonymous applicants are allowed by RLS. */
+/**
+ * Submit a KYC application. Anonymous applicants are allowed: the server decides
+ * who the applicant is, so a guest cannot name someone else's account.
+ *
+ * The write goes through `submit_supplier_application()` because the wizard needs
+ * the row back (the success screen shows the reference the server issued), and a
+ * returned row is checked against the SELECT policies — which `anon` has none of
+ * on `supplier_applications`, since a guest application carries contact, bank and
+ * KYC document details. A guest leaves the row unowned; the sign-up trigger claims
+ * it by email once the account exists.
+ */
 export async function createSupplierApplication(
   input: SupplierApplicationInput,
 ): Promise<ApplicationSubmitResult> {
   if (!supabase) return { status: "error", error: "No backend configured." };
 
-  // A signed-in applicant claims the row; guests leave it unlinked and the
-  // sign-up trigger claims it by email once the account exists.
-  const { data: sessionData } = await supabase.auth.getSession();
-
-  const { data, error } = await supabase
-    .from("supplier_applications")
-    .insert({ applicant_id: sessionData.session?.user.id ?? null, ...applicationColumns(input) })
-    .select(APPLICATION_SELECT)
-    .single();
+  const { data, error } = await supabase.rpc("submit_supplier_application", submissionArgs(input));
 
   if (error || !data) {
     return { status: "error", error: error?.message ?? "Could not submit the application." };
